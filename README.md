@@ -14,7 +14,7 @@
    - [Tampermonkey](https://www.tampermonkey.net/) (рекомендуется для Chrome, Edge, Brave)
    - [Violentmonkey](https://violentmonkey.github.io/) (рекомендуется для Firefox)
 
-2. Установите скрипт
+2. [Установите скрипт с Greasy Fork](https://greasyfork.org/scripts/539512-ozon-interface-enhancer)
 
 ## Как это работает
 
