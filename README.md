@@ -1,7 +1,5 @@
 # Ozon Interface Enhancer
 
-![Ozon Logo](https://static.ozone.ru/multimedia/ozon_logo_primary_ru.svg)
-
 Скрипт для улучшения интерфейса Ozon.by:
 
 - 🗂️ **Сортирует отзывы** от худших к лучшим
@@ -16,7 +14,7 @@
    - [Tampermonkey](https://www.tampermonkey.net/) (рекомендуется для Chrome, Edge, Brave)
    - [Violentmonkey](https://violentmonkey.github.io/) (рекомендуется для Firefox)
 
-2. [Установите скрипт](https://greasyfork.org/scripts/ваш-id) (ссылка появится после публикации на Greasy Fork)
+2. Установите скрипт
 
 ## Как это работает
 
