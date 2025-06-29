@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          Ozon Interface Enhancer
 // @namespace     https://github.com/Zaomil
-// @version       1.0.4
+// @version       1.0.5
 // @description   Улучшает интерфейс Ozon: сортирует отзывы, раскрывает описание, отслеживает цены
 // @author        Zaomil
 // @license       MIT
@@ -11,6 +11,7 @@
 // @grant         GM_setValue
 // @grant         GM_addStyle
 // @grant         GM_xmlhttpRequest
+// @grant         GM_notification
 // @run-at        document-idle
 // @homepageURL   https://github.com/Zaomil/ozon-enhancer
 // @supportURL    https://github.com/Zaomil/ozon-enhancer/issues
@@ -25,10 +26,25 @@
         sortReviews: true,
         expandDescription: true,
         trackPrices: true,
-        maxTrackedItems: 3
+        maxTrackedItems: 3,  // Ограничение до 3 товаров
+        priceDropNotifications: true
     };
 
-    // Управление настройками через Storage
+    // Цветовая схема интерфейса
+    const COLORS = {
+        background: "#121212",
+        surface: "#1e1e1e",
+        primary: "#BB86FC",
+        primaryVariant: "#3700B3",
+        secondary: "#03DAC6",
+        text: "#E0E0E0",
+        textSecondary: "#A0A0A0",
+        error: "#CF6679",
+        success: "#00C853",
+        warning: "#FFAB00"
+    };
+
+    // Управление конфигурацией
     const CONFIG = {
         get sortReviews() {
             return GM_getValue('sortReviews', DEFAULT_CONFIG.sortReviews);
@@ -49,7 +65,8 @@
             GM_setValue('trackPrices', value);
         },
         get maxTrackedItems() {
-            return GM_getValue('maxTrackedItems', DEFAULT_CONFIG.maxTrackedItems);
+            const stored = GM_getValue('maxTrackedItems', DEFAULT_CONFIG.maxTrackedItems);
+            return Math.max(stored, DEFAULT_CONFIG.maxTrackedItems);
         },
         set maxTrackedItems(value) {
             GM_setValue('maxTrackedItems', value);
@@ -59,56 +76,93 @@
         },
         set trackedItems(value) {
             GM_setValue('trackedItems', value);
+        },
+        get priceDropNotifications() {
+            return GM_getValue('priceDropNotifications', DEFAULT_CONFIG.priceDropNotifications);
+        },
+        set priceDropNotifications(value) {
+            GM_setValue('priceDropNotifications', value);
+        },
+        get currentPanelTab() {
+            return GM_getValue('currentPanelTab', 'settings');
+        },
+        set currentPanelTab(value) {
+            GM_setValue('currentPanelTab', value);
+        },
+        get lastPriceCheckTime() {
+            return GM_getValue('lastPriceCheckTime', null);
+        },
+        set lastPriceCheckTime(value) {
+            GM_setValue('lastPriceCheckTime', value);
         }
     };
 
-    // Флаги состояния
+    // Состояние скрипта
     let isSortingApplied = false;
     let panelCreated = false;
     let isDescriptionExpanded = false;
+    let currentTab = CONFIG.currentPanelTab;
 
-    // Функция для парсинга цен
+    // Селекторы для элементов страницы
+    const SELECTORS = {
+        price: [
+            '[data-widget="webPrice"]',
+            '.ui-p0-v',
+            '.ui-q5',
+            '.ui-q0',
+            '.ui-o0',
+            '.ui-o6'
+        ],
+        expandButtons: [
+            '.ui-d0k',
+            '[data-widget="webDescription"] button',
+            '.description button',
+            '.info-section button',
+            '[class*="expandButton"]',
+            '[class*="showMore"]',
+            'button[data-widget="descriptionExpandButton"]',
+            '.ui-k3 button',
+            '.ozon-ui-k3 button',
+            'button[aria-label="Развернуть описание"]'
+        ],
+        gallerySelectors: [
+            '.gallery-modal',
+            '.image-gallery',
+            '.zoom-modal',
+            '[class*="galleryContainer"]',
+            '.image-viewer',
+            '.image-slider'
+        ]
+    };
+
+    // Парсинг цены из текста
     function parsePriceText(text) {
         if (!text) return null;
-
-        let cleanText = text
-            .replace(/[\u00A0\u2009]/g, '')
-            .replace(/\s/g, '')
-            .replace(/,/g, '.')
-            .replace(/[^\d.]/g, '');
-
-        const priceMatch = cleanText.match(/\d+\.\d+|\d+\.|\d+/);
-        if (priceMatch) {
-            let priceValue = priceMatch[0];
-            if (!priceValue.includes('.')) priceValue += '.00';
-
-            const price = parseFloat(priceValue);
-            if (!isNaN(price)) return price;
-        }
-
-        return null;
+        const matches = text.match(/\d+[.,]\d{1,2}/);
+        if (matches) return parseFloat(matches[0].replace(',', '.'));
+        const intMatch = text.match(/\d+/);
+        return intMatch ? parseFloat(intMatch[0]) : null;
     }
 
-    // Функция для извлечения артикула товара
+    // Извлечение артикула товара
     function extractProductArticle() {
         const urlMatch = location.pathname.match(/\/(\d+)(?:\/|\?|$)/);
-        if (urlMatch && urlMatch[1]) return urlMatch[1];
+        if (urlMatch?.[1]) return urlMatch[1];
 
-        const jsonLd = document.querySelector('script[type="application/ld+json"]');
-        if (jsonLd) {
-            try {
+        try {
+            const jsonLd = document.querySelector('script[type="application/ld+json"]');
+            if (jsonLd) {
                 const data = JSON.parse(jsonLd.textContent);
-                if (data.sku) return data.sku;
-                if (data.offers && data.offers.sku) return data.offers.sku;
-            } catch (e) {
-                console.error('[OzonEnhancer] JSON-LD parse error:', e);
+                return data.sku || data.offers?.sku;
             }
+        } catch (e) {
+            console.error('Ошибка при парсинге JSON-LD:', e);
         }
 
         const metaArticle = document.querySelector('meta[property="og:url"]');
         if (metaArticle) {
             const metaMatch = metaArticle.content.match(/\/(\d+)(?:\/|\?|$)/);
-            if (metaMatch && metaMatch[1]) return metaMatch[1];
+            if (metaMatch?.[1]) return metaMatch[1];
         }
 
         const cartButtons = document.querySelectorAll('[data-widget="webAddToCart"]');
@@ -116,65 +170,40 @@
             const article = btn.getAttribute('data-article-id');
             if (article) return article;
         }
-
         return null;
     }
 
-    // Функция для извлечения названия товара
+    // Получение названия товара
     function extractProductName() {
         return document.querySelector('h1')?.textContent?.trim() || 'Неизвестный товар';
     }
 
-    // Функция для извлечения текущей цены
+    // Получение текущей цены товара
     function extractCurrentPrice() {
         try {
-            const ignoreSelectors = [
-                '.ui-a0',
-                '.ui-a2',
-                '.ui-a3'
-            ];
-
-            const priceSelectors = [
-                '[data-widget="webPrice"]',
-                '.ui-p0-v',
-                '.ui-q5', '.ui-q0',
-                '.ui-o0', '.ui-o6'
-            ];
-
-            for (const selector of priceSelectors) {
-                const elements = document.querySelectorAll(selector);
-                for (const element of elements) {
-                    let shouldIgnore = false;
-                    for (const ignoreSelector of ignoreSelectors) {
-                        if (element.closest(ignoreSelector)) {
-                            shouldIgnore = true;
-                            break;
-                        }
-                    }
-                    if (shouldIgnore) continue;
-
+            for (const selector of SELECTORS.price) {
+                const element = document.querySelector(selector);
+                if (element) {
                     const price = parsePriceText(element.textContent);
-                    if (price) return price;
+                    if (price && price > 1) return price;
                 }
             }
-
-            const fallbackElements = document.querySelectorAll('[class*="price"]');
-            for (const element of fallbackElements) {
-                const price = parsePriceText(element.textContent);
-                if (price && price > 1) return price;
-            }
-
             return null;
         } catch (e) {
-            console.error('[OzonEnhancer] Price extraction error:', e);
+            console.error('Ошибка при извлечении цены:', e);
             return null;
         }
     }
 
-    // Добавление товара в список отслеживания
+    // Отслеживание текущего товара
     function trackCurrentProduct() {
         if (!CONFIG.trackPrices) {
             alert('Включите отслеживание цен в настройках расширения');
+            return false;
+        }
+
+        if (CONFIG.trackedItems.length >= CONFIG.maxTrackedItems) {
+            alert(`Достигнут лимит отслеживаемых товаров (${CONFIG.maxTrackedItems})`);
             return false;
         }
 
@@ -184,13 +213,7 @@
             return false;
         }
 
-        if (CONFIG.trackedItems.length >= CONFIG.maxTrackedItems) {
-            alert(`Достигнут лимит отслеживаемых товаров (${CONFIG.maxTrackedItems})`);
-            return false;
-        }
-
-        const isAlreadyTracked = CONFIG.trackedItems.some(item => item.article === article);
-        if (isAlreadyTracked) {
+        if (CONFIG.trackedItems.some(item => item.article === article)) {
             alert('Этот товар уже отслеживается');
             return false;
         }
@@ -214,14 +237,15 @@
                 price,
                 date: new Date().toISOString().split('T')[0]
             }],
-            addedDate: new Date().toISOString()
+            addedDate: new Date().toISOString(),
+            lastNotifiedPrice: price
         };
 
         CONFIG.trackedItems = [...CONFIG.trackedItems, newItem];
         return true;
     }
 
-    // Добавление товара по артикулу
+    // Отслеживание товара по артикулу
     function trackProductByArticle(article) {
         if (!CONFIG.trackPrices) {
             alert('Включите отслеживание цен в настройках расширения');
@@ -238,8 +262,7 @@
             return false;
         }
 
-        const isAlreadyTracked = CONFIG.trackedItems.some(item => item.article === article);
-        if (isAlreadyTracked) {
+        if (CONFIG.trackedItems.some(item => item.article === article)) {
             alert('Этот товар уже отслеживается');
             return false;
         }
@@ -254,7 +277,6 @@
                     try {
                         const parser = new DOMParser();
                         const doc = parser.parseFromString(response.responseText, "text/html");
-
                         const name = doc.querySelector('h1')?.textContent?.trim() || `Товар #${article}`;
                         const price = extractPriceFromDocument(doc);
 
@@ -274,19 +296,19 @@
                                 price,
                                 date: new Date().toISOString().split('T')[0]
                             }],
-                            addedDate: new Date().toISOString()
+                            addedDate: new Date().toISOString(),
+                            lastNotifiedPrice: price
                         };
 
                         CONFIG.trackedItems = [...CONFIG.trackedItems, newItem];
                         resolve(true);
                     } catch (e) {
-                        console.error('[OzonEnhancer] Article tracking error:', e);
+                        console.error('Ошибка при добавлении товара:', e);
                         alert('Ошибка при добавлении товара');
                         resolve(false);
                     }
                 },
-                onerror: function(error) {
-                    console.error('[OzonEnhancer] Product fetch error:', error);
+                onerror: function() {
                     alert('Ошибка при загрузке данных товара');
                     resolve(false);
                 }
@@ -294,56 +316,37 @@
         });
     }
 
-    // Функция для извлечения цены из документа
+    // Извлечение цены из DOM документа
     function extractPriceFromDocument(doc) {
         try {
-            const ignoreSelectors = [
-                '.ui-a0',
-                '.ui-a2',
-                '.ui-a3'
-            ];
-
-            const priceSelectors = [
-                '[data-widget="webPrice"]',
-                '.ui-p0-v',
-                '.ui-q5', '.ui-q0',
-                '.ui-o0', '.ui-o6'
-            ];
-
-            for (const selector of priceSelectors) {
-                const elements = doc.querySelectorAll(selector);
-                for (const element of elements) {
-                    let shouldIgnore = false;
-                    for (const ignoreSelector of ignoreSelectors) {
-                        if (element.closest(ignoreSelector)) {
-                            shouldIgnore = true;
-                            break;
-                        }
-                    }
-                    if (shouldIgnore) continue;
-
+            for (const selector of SELECTORS.price) {
+                const element = doc.querySelector(selector);
+                if (element) {
                     const price = parsePriceText(element.textContent);
-                    if (price) return price;
+                    if (price && price > 1) return price;
                 }
             }
-
-            const fallbackElements = doc.querySelectorAll('[class*="price"]');
-            for (const element of fallbackElements) {
-                const price = parsePriceText(element.textContent);
-                if (price && price > 1) return price;
-            }
-
             return null;
         } catch (e) {
-            console.error('[OzonEnhancer] Price extraction error:', e);
+            console.error('Ошибка при извлечении цены из документа:', e);
             return null;
         }
     }
 
-    // Обновление цены товара
+    // Обновление цены отслеживаемого товара
     function updateTrackedItemPrice(article, newPrice) {
+        let priceDropDetected = false;
+        let notificationItem = null;
+        let oldPrice = null;
+
         const updatedItems = CONFIG.trackedItems.map(item => {
             if (item.article === article && item.currentPrice !== newPrice) {
+                if (newPrice < item.currentPrice) {
+                    priceDropDetected = true;
+                    notificationItem = item;
+                    oldPrice = item.currentPrice;
+                }
+
                 return {
                     ...item,
                     currentPrice: newPrice,
@@ -360,6 +363,30 @@
         });
 
         CONFIG.trackedItems = updatedItems;
+
+        if (priceDropDetected && CONFIG.priceDropNotifications) {
+            showPriceDropNotification(notificationItem, oldPrice, newPrice);
+        }
+
+        return priceDropDetected;
+    }
+
+    // Уведомление о снижении цены
+    function showPriceDropNotification(item, oldPrice, newPrice) {
+        if (!CONFIG.priceDropNotifications) return;
+
+        const priceDiff = (oldPrice - newPrice).toFixed(2);
+        const discount = ((1 - newPrice / oldPrice) * 100).toFixed(0);
+
+        if (GM_notification) {
+            GM_notification({
+                title: "🔔 Цена снизилась!",
+                text: `${item.name}: ${newPrice.toFixed(2)} BYN (↓${priceDiff} BYN)`,
+                image: "https://ozon.by/favicon.ico",
+                timeout: 8000,
+                onclick: () => window.open(item.url, '_blank')
+            });
+        }
     }
 
     // Удаление товара из отслеживания
@@ -368,8 +395,18 @@
     }
 
     // Проверка цен отслеживаемых товаров
-    function checkTrackedPrices() {
+    function checkTrackedPrices(force = false) {
         if (!CONFIG.trackPrices || CONFIG.trackedItems.length === 0) return;
+
+        const now = new Date();
+        const lastCheckTime = CONFIG.lastPriceCheckTime ? new Date(CONFIG.lastPriceCheckTime) : null;
+        const minCheckInterval = 10 * 60 * 1000;
+
+        if (!force && lastCheckTime && (now - lastCheckTime < minCheckInterval)) {
+            return;
+        }
+
+        CONFIG.lastPriceCheckTime = now.toISOString();
 
         const requests = CONFIG.trackedItems.map(item => {
             return new Promise(resolve => {
@@ -383,12 +420,11 @@
                             const price = extractPriceFromDocument(doc);
                             if (price) updateTrackedItemPrice(item.article, price);
                         } catch (e) {
-                            console.error('[OzonEnhancer] Price update error:', e);
+                            console.error('Ошибка при обновлении цены товара:', e);
                         }
                         resolve();
                     },
-                    onerror: function(error) {
-                        console.error('[OzonEnhancer] Price check error:', error);
+                    onerror: function() {
                         resolve();
                     }
                 });
@@ -396,56 +432,36 @@
         });
 
         Promise.all(requests).then(() => {
-            if (panelCreated) createControlPanel();
+            if (panelCreated) refreshPanel();
         });
     }
 
-    // Раскрытие описания товара
+    // Автоматическое раскрытие описания товара
     function expandDescription() {
         if (isDescriptionExpanded || !CONFIG.expandDescription) return;
         if (!location.pathname.includes('/product/')) return;
 
-        try {
-            const buttonTexts = ['Показать полностью', 'Развернуть описание', 'Читать полностью', 'Показать всё', 'Развернуть'];
+        const buttonTexts = ['Показать полностью', 'Развернуть описание', 'Читать полностью', 'Показать всё', 'Развернуть'];
 
-            for (const btn of document.querySelectorAll('button, [role="button"]')) {
-                const btnText = btn.textContent?.trim() || '';
-                if (buttonTexts.some(text => btnText.includes(text)) &&
-                    btn.offsetParent !== null &&
-                    btn.getAttribute('aria-expanded') !== 'true') {
-                    btn.click();
-                    isDescriptionExpanded = true;
-                    return;
-                }
+        for (const btn of document.querySelectorAll('button, [role="button"]')) {
+            const btnText = btn.textContent?.trim() || '';
+            if (buttonTexts.some(text => btnText.includes(text)) &&
+                btn.offsetParent !== null &&
+                btn.getAttribute('aria-expanded') !== 'true') {
+                btn.click();
+                isDescriptionExpanded = true;
+                return;
             }
-
-            const classSelectors = [
-                '.ui-d0k',
-                '[data-widget="webDescription"] button',
-                '.description button',
-                '.info-section button',
-                '[class*="expandButton"]',
-                '[class*="showMore"]',
-                'button[data-widget="descriptionExpandButton"]',
-                '.ui-k3 button',
-                '.ozon-ui-k3 button',
-                'button[aria-label="Развернуть описание"]'
-            ];
-
-            for (const selector of classSelectors) {
-                const btn = document.querySelector(selector);
-                if (btn && btn.offsetParent !== null && btn.getAttribute('aria-expanded') !== 'true') {
-                    btn.click();
-                    isDescriptionExpanded = true;
-                    return;
-                }
-            }
-        } catch (e) {
-            console.error('[OzonEnhancer] Description expand error:', e);
         }
     }
 
-    // Показать график цены для товара
+    // Форматирование даты в формате dd/mm/yyyy
+    function formatDate(dateString) {
+        const [year, month, day] = dateString.split('-');
+        return `${day}/${month}/${year}`;
+    }
+
+    // Показ графика цены товара
     function showPriceChart(item) {
         const modal = document.createElement('div');
         modal.style.cssText = `
@@ -454,23 +470,26 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0,0,0,0.5);
+            background: rgba(0,0,0,0.7);
             display: flex;
             align-items: center;
             justify-content: center;
             z-index: 20000;
+            backdrop-filter: blur(4px);
         `;
 
         const modalContent = document.createElement('div');
         modalContent.style.cssText = `
-            background: white;
+            background: ${COLORS.surface};
             border-radius: 12px;
             padding: 20px;
-            max-width: 90%;
-            max-height: 90%;
-            overflow: auto;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            width: 400px;
+            width: min(90vw, 600px);
+            max-height: 90vh;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            color: ${COLORS.text};
+            display: flex;
+            flex-direction: column;
         `;
 
         modal.appendChild(modalContent);
@@ -479,11 +498,47 @@
         title.textContent = `История цены: ${item.name}`;
         title.style.cssText = `
             font-weight: 600;
-            font-size: 16px;
+            font-size: 18px;
             margin-bottom: 15px;
             text-align: center;
+            color: ${COLORS.primary};
         `;
         modalContent.appendChild(title);
+
+        const infoRow = document.createElement('div');
+        infoRow.style.cssText = `
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 15px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 10px;
+        `;
+
+        const initialPrice = item.initialPrice;
+        const currentPrice = item.currentPrice;
+        const minPrice = Math.min(...item.priceHistory.map(p => p.price));
+        const maxPrice = Math.max(...item.priceHistory.map(p => p.price));
+
+        infoRow.innerHTML = `
+            <div style="text-align: center;">
+                <div style="font-size: 12px; color: ${COLORS.textSecondary}">Текущая</div>
+                <div style="font-weight: 700; font-size: 16px; color: ${currentPrice < initialPrice ? COLORS.success : COLORS.text}">${currentPrice.toFixed(2)} BYN</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 12px; color: ${COLORS.textSecondary}">Начальная</div>
+                <div style="font-weight: 700; font-size: 16px;">${initialPrice.toFixed(2)} BYN</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 12px; color: ${COLORS.textSecondary}">Минимальная</div>
+                <div style="font-weight: 700; font-size: 16px; color: ${COLORS.success}">${minPrice.toFixed(2)} BYN</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 12px; color: ${COLORS.textSecondary}">Максимальная</div>
+                <div style="font-weight: 700; font-size: 16px; color: ${COLORS.error}">${maxPrice.toFixed(2)} BYN</div>
+            </div>
+        `;
+        modalContent.appendChild(infoRow);
 
         if (item.priceHistory.length < 2) {
             const message = document.createElement('div');
@@ -496,84 +551,192 @@
             modalContent.appendChild(chartContainer);
 
             const canvas = document.createElement('canvas');
-            canvas.width = 360;
-            canvas.height = 250;
             chartContainer.appendChild(canvas);
-            const ctx = canvas.getContext('2d');
+            document.body.appendChild(modal);
 
-            const prices = item.priceHistory.map(entry => entry.price);
-            const dates = item.priceHistory.map(entry => entry.date);
+            setTimeout(() => {
+                const ctx = canvas.getContext('2d');
+                const containerWidth = chartContainer.clientWidth;
+                const containerHeight = chartContainer.clientHeight;
 
-            const minPrice = Math.min(...prices);
-            const maxPrice = Math.max(...prices);
-            const priceRange = maxPrice - minPrice;
+                canvas.width = containerWidth;
+                canvas.height = containerHeight;
 
-            const gradient = ctx.createLinearGradient(0, 0, 0, 250);
-            gradient.addColorStop(0, 'rgba(0, 102, 255, 0.8)');
-            gradient.addColorStop(1, 'rgba(0, 102, 255, 0.2)');
+                const sortedHistory = [...item.priceHistory].sort((a, b) =>
+                    new Date(a.date) - new Date(b.date)
+                );
 
-            ctx.lineWidth = 3;
-            ctx.strokeStyle = '#0066ff';
-            ctx.fillStyle = gradient;
+                const prices = sortedHistory.map(entry => entry.price);
+                const dates = sortedHistory.map(entry => formatDate(entry.date));
 
-            const points = [];
-            const padding = 30;
-            const graphWidth = canvas.width - padding * 2;
-            const graphHeight = canvas.height - padding * 2;
+                const minVal = Math.min(...prices);
+                const maxVal = Math.max(...prices);
+                const range = maxVal - minVal || 1;
 
-            for (let i = 0; i < prices.length; i++) {
-                const x = padding + (i / (prices.length - 1)) * graphWidth;
-                const y = padding + graphHeight - ((prices[i] - minPrice) / priceRange * graphHeight);
-                points.push({x, y});
-            }
+                // Увеличенные отступы для осей
+                const padding = { top: 30, right: 30, bottom: 50, left: 60 };
+                const graphWidth = canvas.width - padding.left - padding.right;
+                const graphHeight = canvas.height - padding.top - padding.bottom;
 
-            ctx.beginPath();
-            ctx.moveTo(padding, padding + graphHeight);
-            points.forEach(point => ctx.lineTo(point.x, point.y));
-            ctx.lineTo(padding + graphWidth, padding + graphHeight);
-            ctx.closePath();
-            ctx.fill();
+                // Очистка холста
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            ctx.beginPath();
-            ctx.moveTo(points[0].x, points[0].y);
-            points.slice(1).forEach(point => ctx.lineTo(point.x, point.y));
-            ctx.stroke();
+                // Функции преобразования значений
+                const x = (index) => padding.left + (index / (prices.length - 1)) * graphWidth;
+                const y = (price) => padding.top + graphHeight - ((price - minVal) / range * graphHeight);
 
-            ctx.fillStyle = '#0066ff';
-            points.forEach(point => {
+                // Рисование сетки
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.lineWidth = 1;
                 ctx.beginPath();
-                ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+
+                // Горизонтальные линии сетки
+                const horizontalLineCount = 5;
+                for (let i = 0; i < horizontalLineCount; i++) {
+                    const value = minVal + (i / (horizontalLineCount - 1)) * range;
+                    const yCoord = y(value);
+                    ctx.moveTo(padding.left, yCoord);
+                    ctx.lineTo(canvas.width - padding.right, yCoord);
+                }
+                ctx.stroke();
+
+                // Подписи значений по оси Y
+                ctx.fillStyle = COLORS.textSecondary;
+                ctx.textAlign = 'right';
+                ctx.textBaseline = 'middle';
+                ctx.font = '12px sans-serif';
+                for (let i = 0; i < horizontalLineCount; i++) {
+                    const value = minVal + (i / (horizontalLineCount - 1)) * range;
+                    const yCoord = y(value);
+                    ctx.fillText(value.toFixed(2), padding.left - 10, yCoord);
+                }
+
+                // Рисование осей
+                ctx.strokeStyle = COLORS.text;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                // Ось Y
+                ctx.moveTo(padding.left, padding.top);
+                ctx.lineTo(padding.left, padding.top + graphHeight);
+                // Ось X
+                ctx.moveTo(padding.left, padding.top + graphHeight);
+                ctx.lineTo(canvas.width - padding.right, padding.top + graphHeight);
+                ctx.stroke();
+
+                // Определение важных точек
+                const importantPoints = [
+                    { index: 0, label: `${prices[0].toFixed(2)} BYN`, date: dates[0] },
+                    { index: prices.length - 1, label: `${prices[prices.length - 1].toFixed(2)} BYN`, date: dates[dates.length - 1] }
+                ];
+
+                const minIndex = prices.indexOf(minVal);
+                const maxIndex = prices.indexOf(maxVal);
+
+                if (minIndex !== 0 && minIndex !== prices.length - 1) {
+                    importantPoints.push({
+                        index: minIndex,
+                        label: `${minVal.toFixed(2)} BYN`,
+                        date: dates[minIndex]
+                    });
+                }
+
+                if (maxIndex !== 0 && maxIndex !== prices.length - 1) {
+                    importantPoints.push({
+                        index: maxIndex,
+                        label: `${maxVal.toFixed(2)} BYN`,
+                        date: dates[maxIndex]
+                    });
+                }
+
+                // Подписи дат по оси X
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '12px sans-serif';
+
+                // Убедимся, что даты не перекрываются
+                const drawnPositions = [];
+                importantPoints.forEach(point => {
+                    const xCoord = x(point.index);
+
+                    // Проверка наложения
+                    let canDraw = true;
+                    for (const pos of drawnPositions) {
+                        if (Math.abs(xCoord - pos) < 60) {
+                            canDraw = false;
+                            break;
+                        }
+                    }
+
+                    if (canDraw) {
+                        ctx.fillText(point.date, xCoord, padding.top + graphHeight + 15);
+                        drawnPositions.push(xCoord);
+                    }
+                });
+
+                // Градиент под графиком
+                const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + graphHeight);
+                gradient.addColorStop(0, 'rgba(187, 134, 252, 0.3)');
+                gradient.addColorStop(1, 'rgba(187, 134, 252, 0.05)');
+
+                ctx.beginPath();
+                ctx.moveTo(x(0), y(prices[0]));
+                for (let i = 1; i < prices.length; i++) {
+                    ctx.lineTo(x(i), y(prices[i]));
+                }
+                ctx.lineTo(x(prices.length - 1), y(prices[prices.length - 1]));
+                ctx.lineTo(x(prices.length - 1), padding.top + graphHeight);
+                ctx.lineTo(x(0), padding.top + graphHeight);
+                ctx.closePath();
+                ctx.fillStyle = gradient;
                 ctx.fill();
-            });
 
-            ctx.fillStyle = '#333';
-            ctx.font = '12px Arial';
-            ctx.textAlign = 'center';
+                // Линия графика
+                ctx.beginPath();
+                ctx.moveTo(x(0), y(prices[0]));
+                for (let i = 1; i < prices.length; i++) {
+                    ctx.lineTo(x(i), y(prices[i]));
+                }
+                ctx.lineWidth = 4;
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+                ctx.strokeStyle = COLORS.primary;
+                ctx.stroke();
 
-            ctx.fillText(`${prices[0].toFixed(2)} BYN`, points[0].x, points[0].y - 15);
-            ctx.fillText(dates[0], points[0].x, points[0].y + 25);
+                // Точки на графике
+                ctx.fillStyle = COLORS.primary;
+                importantPoints.forEach(point => {
+                    const xCoord = x(point.index);
+                    const yCoord = y(prices[point.index]);
+                    ctx.beginPath();
+                    ctx.arc(xCoord, yCoord, 6, 0, Math.PI * 2);
+                    ctx.fill();
+                });
 
-            ctx.fillText(`${prices[prices.length - 1].toFixed(2)} BYN`,
-                points[points.length - 1].x,
-                points[points.length - 1].y - 15
-            );
-            ctx.fillText(dates[dates.length - 1],
-                points[points.length - 1].x,
-                points[points.length - 1].y + 25
-            );
+                // Подписи цен для важных точек
+                ctx.fillStyle = COLORS.text;
+                ctx.textBaseline = 'bottom';
+                ctx.font = '12px sans-serif';
 
-            const minIndex = prices.indexOf(minPrice);
-            const maxIndex = prices.indexOf(maxPrice);
+                importantPoints.forEach(point => {
+                    const xCoord = x(point.index);
+                    const yCoord = y(prices[point.index]);
 
-            if (minIndex !== 0 && minIndex !== prices.length - 1) {
-                ctx.fillText(`${minPrice.toFixed(2)} BYN`, points[minIndex].x, points[minIndex].y - 15);
-                ctx.fillText(dates[minIndex], points[minIndex].x, points[minIndex].y + 25);
-            }
+                    // Проверка наложения
+                    let canDraw = true;
+                    for (const pos of drawnPositions) {
+                        if (Math.abs(xCoord - pos) < 40) {
+                            canDraw = false;
+                            break;
+                        }
+                    }
 
-            if (maxIndex !== 0 && maxIndex !== prices.length - 1) {
-                ctx.fillText(`${maxPrice.toFixed(2)} BYN`, points[maxIndex].x, points[maxIndex].y - 15);
-                ctx.fillText(dates[maxIndex], points[maxIndex].x, points[maxIndex].y + 25);
-            }
+                    if (canDraw) {
+                        ctx.fillText(point.label, xCoord, yCoord - 10);
+                        drawnPositions.push(xCoord);
+                    }
+                });
+            }, 100);
         }
 
         const closeBtn = document.createElement('button');
@@ -581,12 +744,13 @@
         closeBtn.style.cssText = `
             display: block;
             margin: 15px auto 0;
-            padding: 8px 20px;
-            background: #0066ff;
-            color: white;
+            padding: 10px 25px;
+            background: ${COLORS.primary};
+            color: ${COLORS.background};
             border: none;
             border-radius: 6px;
             cursor: pointer;
+            font-weight: 600;
         `;
         closeBtn.addEventListener('click', () => modal.remove());
         modalContent.appendChild(closeBtn);
@@ -594,7 +758,7 @@
         document.body.appendChild(modal);
     }
 
-    // Создает панель управления
+    // Создание панели управления
     function createControlPanel() {
         if (panelCreated) return;
         panelCreated = true;
@@ -608,47 +772,162 @@
             position: fixed;
             top: 60px;
             right: 10px;
-            background: #ffffff;
+            background: ${COLORS.surface};
             border-radius: 12px;
             padding: 0;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
             z-index: 10000;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            width: 340px;
+            width: 360px;
             max-height: 80vh;
             overflow: hidden;
-            border: 1px solid #eaeaea;
+            border: 1px solid rgba(255,255,255,0.1);
             display: flex;
             flex-direction: column;
+            color: ${COLORS.text};
         `;
 
         const header = document.createElement('div');
-        header.textContent = 'Ozon Enhancer';
+        header.innerHTML = `<span style="font-size: 20px; margin-right: 8px;">⚡</span> Ozon Enhancer`;
         header.style.cssText = `
             font-weight: 600;
             font-size: 16px;
             padding: 14px 16px;
-            background: linear-gradient(135deg, #0066ff 0%, #0048cc 100%);
-            color: white;
+            background: ${COLORS.background};
+            color: ${COLORS.primary};
             display: flex;
             align-items: center;
             gap: 8px;
             position: relative;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
         `;
 
-        const icon = document.createElement('div');
-        icon.innerHTML = '⚡';
-        icon.style.fontSize = '18px';
-        header.prepend(icon);
         panel.appendChild(header);
 
-        const settingsContainer = document.createElement('div');
-        settingsContainer.style.cssText = `
-            padding: 12px 16px;
+        const tabContainer = document.createElement('div');
+        tabContainer.id = 'ozon-tab-container';
+        tabContainer.style.cssText = `
+            display: flex;
+            background: ${COLORS.background};
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        `;
+
+        const createTab = (id, label) => {
+            const tab = document.createElement('div');
+            tab.dataset.tab = id;
+            tab.textContent = label;
+            tab.style.cssText = `
+                padding: 12px 16px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                transition: all 0.2s;
+                border-bottom: 2px solid transparent;
+            `;
+
+            if (currentTab === id) {
+                tab.style.borderBottomColor = COLORS.primary;
+                tab.style.color = COLORS.primary;
+            } else {
+                tab.style.color = COLORS.textSecondary;
+            }
+
+            tab.addEventListener('click', () => {
+                currentTab = id;
+                CONFIG.currentPanelTab = id;
+                refreshPanel();
+            });
+
+            return tab;
+        };
+
+        tabContainer.appendChild(createTab('settings', 'Настройки'));
+        tabContainer.appendChild(createTab('tracking', 'Отслеживание'));
+
+        panel.appendChild(tabContainer);
+
+        const contentContainer = document.createElement('div');
+        contentContainer.id = 'ozon-panel-content';
+        contentContainer.style.cssText = `
+            padding: 0;
             overflow-y: auto;
             flex-grow: 1;
         `;
-        panel.appendChild(settingsContainer);
+        panel.appendChild(contentContainer);
+
+        document.body.appendChild(panel);
+        refreshPanel();
+
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '&times;';
+        closeBtn.title = 'Закрыть панель';
+        closeBtn.style.cssText = `
+            position: absolute;
+            top: 14px;
+            right: 14px;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: ${COLORS.text};
+            font-size: 20px;
+            line-height: 1;
+            transition: all 0.2s;
+        `;
+        closeBtn.addEventListener('mouseover', () => closeBtn.style.background = 'rgba(255,255,255,0.2)');
+        closeBtn.addEventListener('mouseout', () => closeBtn.style.background = 'rgba(255,255,255,0.1)');
+        closeBtn.addEventListener('click', () => {
+            panel.remove();
+            panelCreated = false;
+        });
+        header.appendChild(closeBtn);
+
+        return panel;
+    }
+
+    // Обновление содержимого панели
+    function refreshPanel() {
+        if (!panelCreated) return;
+
+        const tabContainer = document.getElementById('ozon-tab-container');
+        if (tabContainer) {
+            const tabs = tabContainer.querySelectorAll('[data-tab]');
+            tabs.forEach(tab => {
+                if (tab.dataset.tab === currentTab) {
+                    tab.style.borderBottomColor = COLORS.primary;
+                    tab.style.color = COLORS.primary;
+                } else {
+                    tab.style.borderBottomColor = 'transparent';
+                    tab.style.color = COLORS.textSecondary;
+                }
+            });
+        }
+
+        const contentContainer = document.getElementById('ozon-panel-content');
+        if (!contentContainer) return;
+
+        contentContainer.innerHTML = '';
+
+        switch (currentTab) {
+            case 'settings':
+                renderSettingsTab(contentContainer);
+                break;
+            case 'tracking':
+                renderTrackingTab(contentContainer);
+                break;
+        }
+    }
+
+    // Рендер вкладки настроек
+    function renderSettingsTab(container) {
+        const settingsContainer = document.createElement('div');
+        settingsContainer.style.padding = '16px';
+        container.appendChild(settingsContainer);
 
         settingsContainer.appendChild(createToggle(
             'Сортировка отзывов (от худших)',
@@ -677,306 +956,334 @@
             'Отслеживание цен',
             '💰',
             CONFIG.trackPrices,
-            checked => {
-                CONFIG.trackPrices = checked;
-                createControlPanel(); // Пересоздаем панель при изменении
-            }
+            checked => CONFIG.trackPrices = checked
         ));
 
-        // Секция отслеживания цен показывается только если включена функция
-        if (CONFIG.trackPrices) {
-            const priceTrackingSection = document.createElement('div');
-            priceTrackingSection.style.cssText = `
-                margin-top: 15px;
-                border-top: 1px solid #f0f0f0;
-                padding-top: 15px;
-            `;
+        settingsContainer.appendChild(createToggle(
+            'Уведомления о снижении цен',
+            '🔔',
+            CONFIG.priceDropNotifications,
+            checked => CONFIG.priceDropNotifications = checked
+        ));
+    }
 
-            const priceHeader = document.createElement('div');
-            priceHeader.textContent = 'Отслеживание цен';
-            priceHeader.style.cssText = `
-                font-weight: 600;
-                font-size: 15px;
-                margin-bottom: 10px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            `;
+    // Рендер вкладки отслеживания
+    function renderTrackingTab(container) {
+        const trackingContainer = document.createElement('div');
+        trackingContainer.style.padding = '16px';
+        container.appendChild(trackingContainer);
 
-            const refreshButton = document.createElement('button');
-            refreshButton.textContent = 'Обновить цены';
-            refreshButton.style.cssText = `
-                background: #f0f0f0;
-                border: none;
-                padding: 5px 10px;
-                border-radius: 6px;
-                cursor: pointer;
-                font-size: 12px;
-            `;
-            refreshButton.addEventListener('click', () => {
-                refreshButton.textContent = 'Обновление...';
-                refreshButton.disabled = true;
-                checkTrackedPrices();
-                setTimeout(() => {
-                    if (panelCreated) createControlPanel();
-                    refreshButton.disabled = false;
-                    refreshButton.textContent = 'Обновить цены';
-                }, 3000);
-            });
-            priceHeader.appendChild(refreshButton);
+        const headerRow = document.createElement('div');
+        headerRow.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        `;
 
-            if (location.pathname.includes('/product/')) {
-                const addButton = document.createElement('button');
-                addButton.textContent = 'Добавить текущий';
-                addButton.style.cssText = `
-                    background: #0066ff;
-                    color: white;
-                    border: none;
-                    padding: 5px 10px;
-                    border-radius: 6px;
-                    cursor: pointer;
-                    font-size: 12px;
-                    margin-left: 8px;
-                `;
-                addButton.addEventListener('click', () => {
-                    if (trackCurrentProduct()) {
-                        alert('Товар добавлен в отслеживание!');
-                        createControlPanel();
-                    }
-                });
-                priceHeader.appendChild(addButton);
-            }
+        const title = document.createElement('div');
+        title.textContent = 'Отслеживание цен';
+        title.style.cssText = `
+            font-weight: 600;
+            font-size: 15px;
+        `;
+        headerRow.appendChild(title);
 
-            priceTrackingSection.appendChild(priceHeader);
+        const stats = document.createElement('div');
+        stats.textContent = `${CONFIG.trackedItems.length} из ${CONFIG.maxTrackedItems}`;
+        stats.style.cssText = `
+            font-size: 13px;
+            color: ${COLORS.textSecondary};
+        `;
+        headerRow.appendChild(stats);
+        trackingContainer.appendChild(headerRow);
 
-            const manualAddForm = document.createElement('div');
-            manualAddForm.style.cssText = `
-                display: flex;
-                gap: 8px;
-                margin: 12px 0;
-            `;
+        const actionsRow = document.createElement('div');
+        actionsRow.style.cssText = `
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        `;
 
-            const articleInput = document.createElement('input');
-            articleInput.type = 'text';
-            articleInput.placeholder = 'Введите артикул товара';
-            articleInput.style.cssText = `
-                flex-grow: 1;
-                padding: 8px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                font-size: 13px;
-            `;
+        const refreshButton = document.createElement('button');
+        refreshButton.textContent = 'Обновить цены';
+        refreshButton.style.cssText = `
+            background: rgba(255,255,255,0.1);
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            color: ${COLORS.text};
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: all 0.2s;
+        `;
+        refreshButton.innerHTML = '🔄 ' + refreshButton.textContent;
+        refreshButton.addEventListener('mouseover', () => refreshButton.style.background = 'rgba(255,255,255,0.15)');
+        refreshButton.addEventListener('mouseout', () => refreshButton.style.background = 'rgba(255,255,255,0.1)');
+        refreshButton.addEventListener('click', () => {
+            refreshButton.textContent = 'Обновление...';
+            refreshButton.disabled = true;
+            checkTrackedPrices(true);
+            setTimeout(() => {
+                refreshButton.textContent = 'Обновить цены';
+                refreshButton.disabled = false;
+            }, 3000);
+        });
+        actionsRow.appendChild(refreshButton);
 
-            const manualAddButton = document.createElement('button');
-            manualAddButton.textContent = 'Добавить';
-            manualAddButton.style.cssText = `
-                background: #0066ff;
-                color: white;
+        if (location.pathname.includes('/product/')) {
+            const addButton = document.createElement('button');
+            addButton.textContent = 'Добавить текущий';
+            addButton.style.cssText = `
+                background: ${COLORS.primary};
+                color: ${COLORS.background};
                 border: none;
                 padding: 8px 12px;
                 border-radius: 6px;
                 cursor: pointer;
-                font-size: 12px;
-                white-space: nowrap;
-            `;
-
-            manualAddButton.addEventListener('click', () => {
-                const article = articleInput.value.trim();
-                if (!article) {
-                    alert('Пожалуйста, введите артикул товара');
-                    return;
-                }
-
-                manualAddButton.textContent = 'Добавление...';
-                manualAddButton.disabled = true;
-
-                trackProductByArticle(article).then(success => {
-                    manualAddButton.textContent = 'Добавить';
-                    manualAddButton.disabled = false;
-
-                    if (success) {
-                        alert('Товар успешно добавлен!');
-                        articleInput.value = '';
-                        createControlPanel();
-                    }
-                });
-            });
-
-            manualAddForm.appendChild(articleInput);
-            manualAddForm.appendChild(manualAddButton);
-            priceTrackingSection.appendChild(manualAddForm);
-
-            const trackedItemsContainer = document.createElement('div');
-            trackedItemsContainer.id = 'ozon-tracked-items';
-            trackedItemsContainer.style.cssText = `
+                font-size: 13px;
+                flex: 1;
                 display: flex;
-                flex-direction: column;
-                gap: 10px;
-                margin-top: 8px;
-                max-height: 200px;
-                overflow-y: auto;
-                padding-right: 4px;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                font-weight: 500;
+                transition: all 0.2s;
             `;
-
-            if (CONFIG.trackedItems.length === 0) {
-                const emptyState = document.createElement('div');
-                emptyState.textContent = 'Нет отслеживаемых товаров';
-                emptyState.style.cssText = `
-                    text-align: center;
-                    padding: 15px;
-                    color: #888;
-                    font-size: 13px;
-                `;
-                trackedItemsContainer.appendChild(emptyState);
-            } else {
-                CONFIG.trackedItems.forEach(item => {
-                    const itemEl = document.createElement('div');
-                    itemEl.style.cssText = `
-                        border: 1px solid #eee;
-                        border-radius: 8px;
-                        padding: 10px;
-                        position: relative;
-                    `;
-
-                    const itemName = document.createElement('a');
-                    itemName.href = item.url;
-                    itemName.textContent = item.name.length > 40 ? item.name.substring(0, 40) + '...' : item.name;
-                    itemName.title = item.name;
-                    itemName.target = '_blank';
-                    itemName.style.cssText = `
-                        font-weight: 500;
-                        display: block;
-                        margin-bottom: 6px;
-                        text-decoration: none;
-                        color: #0066ff;
-                        font-size: 13px;
-                    `;
-
-                    const priceInfo = document.createElement('div');
-                    const initialPrice = item.initialPrice;
-                    const currentPrice = item.currentPrice;
-                    const diff = currentPrice - initialPrice;
-                    const diffPercent = ((Math.abs(diff) / initialPrice) * 100).toFixed(1);
-
-                    priceInfo.innerHTML = `
-                        <div style="font-size: 15px; font-weight: 700; color: ${diff < 0 ? '#00a046' : '#ff3b30'}">
-                            ${currentPrice.toFixed(2)} BYN
-                        </div>
-                        <div style="font-size: 12px; color: #666; margin-top: 3px;">
-                            ${diff === 0 ? 'Без изменений' :
-                             diff < 0 ? `▼ -${Math.abs(diff).toFixed(2)} BYN (${diffPercent}%)` :
-                             `▲ +${diff.toFixed(2)} BYN (${diffPercent}%)`}
-                        </div>
-                    `;
-
-                    const buttonsContainer = document.createElement('div');
-                    buttonsContainer.style.cssText = `
-                        position: absolute;
-                        top: 6px;
-                        right: 6px;
-                        display: flex;
-                        flex-direction: column;
-                        gap: 4px;
-                    `;
-
-                    const removeBtn = document.createElement('button');
-                    removeBtn.textContent = '✕';
-                    removeBtn.title = 'Удалить из отслеживания';
-                    removeBtn.style.cssText = `
-                        width: 22px;
-                        height: 22px;
-                        border: none;
-                        background: #f8f8f8;
-                        border-radius: 50%;
-                        cursor: pointer;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        font-size: 14px;
-                        color: #999;
-                    `;
-                    removeBtn.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        removeTrackedItem(item.article);
-                        createControlPanel();
-                    });
-
-                    const chartBtn = document.createElement('button');
-                    chartBtn.textContent = '📈';
-                    chartBtn.title = 'Показать график цены';
-                    chartBtn.style.cssText = `
-                        width: 22px;
-                        height: 22px;
-                        border: none;
-                        background: #f8f8f8;
-                        border-radius: 50%;
-                        cursor: pointer;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        font-size: 14px;
-                        color: #999;
-                    `;
-                    chartBtn.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        showPriceChart(item);
-                    });
-
-                    buttonsContainer.appendChild(chartBtn);
-                    buttonsContainer.appendChild(removeBtn);
-
-                    itemEl.appendChild(itemName);
-                    itemEl.appendChild(priceInfo);
-                    itemEl.appendChild(buttonsContainer);
-                    trackedItemsContainer.appendChild(itemEl);
-                });
-            }
-
-            priceTrackingSection.appendChild(trackedItemsContainer);
-            settingsContainer.appendChild(priceTrackingSection);
+            addButton.innerHTML = '➕ ' + addButton.textContent;
+            addButton.addEventListener('mouseover', () => addButton.style.opacity = '0.9');
+            addButton.addEventListener('mouseout', () => addButton.style.opacity = '1');
+            addButton.addEventListener('click', () => trackCurrentProduct() && refreshPanel());
+            actionsRow.appendChild(addButton);
         }
 
-        const closeBtn = document.createElement('button');
-        closeBtn.innerHTML = '&times;';
-        closeBtn.title = 'Закрыть панель';
-        closeBtn.style.cssText = `
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: rgba(255,255,255,0.2);
-            border: none;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
+        trackingContainer.appendChild(actionsRow);
+
+        const manualAddForm = document.createElement('div');
+        manualAddForm.style.cssText = `
             display: flex;
-            align-items: center;
-            justify-content: center;
+            gap: 8px;
+            margin: 12px 0 20px;
+        `;
+
+        const articleInput = document.createElement('input');
+        articleInput.type = 'text';
+        articleInput.placeholder = 'Введите артикул товара';
+        articleInput.style.cssText = `
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            font-size: 13px;
+            background: rgba(255,255,255,0.05);
+            color: ${COLORS.text};
+            outline: none;
+        `;
+
+        const manualAddButton = document.createElement('button');
+        manualAddButton.textContent = 'Добавить';
+        manualAddButton.style.cssText = `
+            background: ${COLORS.primary};
+            color: ${COLORS.background};
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
             cursor: pointer;
-            color: white;
-            font-size: 18px;
-            line-height: 1;
+            font-size: 13px;
+            font-weight: 500;
+            white-space: nowrap;
             transition: all 0.2s;
         `;
-        closeBtn.addEventListener('mouseover', () => closeBtn.style.background = 'rgba(255,255,255,0.3)');
-        closeBtn.addEventListener('mouseout', () => closeBtn.style.background = 'rgba(255,255,255,0.2)');
-        closeBtn.addEventListener('click', () => {
-            panel.remove();
-            panelCreated = false;
-        });
-        header.appendChild(closeBtn);
+        manualAddButton.addEventListener('mouseover', () => manualAddButton.style.opacity = '0.9');
+        manualAddButton.addEventListener('mouseout', () => manualAddButton.style.opacity = '1');
+        manualAddButton.addEventListener('click', () => {
+            const article = articleInput.value.trim();
+            if (!article) {
+                alert('Пожалуйста, введите артикул товара');
+                return;
+            }
 
-        document.body.appendChild(panel);
-        return panel;
+            manualAddButton.textContent = 'Добавление...';
+            manualAddButton.disabled = true;
+
+            trackProductByArticle(article).then(success => {
+                manualAddButton.textContent = 'Добавить';
+                manualAddButton.disabled = false;
+                if (success) {
+                    articleInput.value = '';
+                    refreshPanel();
+                }
+            });
+        });
+
+        manualAddForm.appendChild(articleInput);
+        manualAddForm.appendChild(manualAddButton);
+        trackingContainer.appendChild(manualAddForm);
+
+        const trackedItemsContainer = document.createElement('div');
+        trackedItemsContainer.id = 'ozon-tracked-items';
+        trackedItemsContainer.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            padding-right: 4px;
+        `;
+
+        if (CONFIG.trackedItems.length === 0) {
+            const emptyState = document.createElement('div');
+            emptyState.textContent = 'Нет отслеживаемых товаров';
+            emptyState.style.cssText = `
+                text-align: center;
+                padding: 30px 15px;
+                color: ${COLORS.textSecondary};
+                font-size: 13px;
+                background: rgba(255,255,255,0.03);
+                border-radius: 8px;
+            `;
+            trackedItemsContainer.appendChild(emptyState);
+        } else {
+            CONFIG.trackedItems.forEach(item => {
+                const itemEl = document.createElement('div');
+                itemEl.style.cssText = `
+                    background: rgba(255,255,255,0.03);
+                    border-radius: 8px;
+                    padding: 12px;
+                    position: relative;
+                    transition: all 0.2s;
+                `;
+                itemEl.addEventListener('mouseover', () => itemEl.style.background = 'rgba(255,255,255,0.06)');
+                itemEl.addEventListener('mouseout', () => itemEl.style.background = 'rgba(255,255,255,0.03)');
+
+                const itemName = document.createElement('a');
+                itemName.href = item.url;
+                itemName.textContent = item.name.length > 40 ? item.name.substring(0, 40) + '...' : item.name;
+                itemName.title = item.name;
+                itemName.target = '_blank';
+                itemName.style.cssText = `
+                    font-weight: 500;
+                    display: block;
+                    margin-bottom: 8px;
+                    text-decoration: none;
+                    color: ${COLORS.primary};
+                    font-size: 14px;
+                `;
+
+                const priceInfo = document.createElement('div');
+                const initialPrice = item.initialPrice;
+                const currentPrice = item.currentPrice;
+                const diff = currentPrice - initialPrice;
+                const diffPercent = ((Math.abs(diff) / initialPrice) * 100).toFixed(1);
+
+                priceInfo.innerHTML = `
+                    <div style="font-size: 16px; font-weight: 700; color: ${diff < 0 ? COLORS.success : COLORS.text}">
+                        ${currentPrice.toFixed(2)} BYN
+                    </div>
+                    <div style="font-size: 13px; color: ${COLORS.textSecondary}; margin-top: 4px;">
+                        ${diff === 0 ? 'Без изменений' :
+                         diff < 0 ? `▼ -${Math.abs(diff).toFixed(2)} BYN (${diffPercent}%)` :
+                         `▲ +${diff.toFixed(2)} BYN (${diffPercent}%)`}
+                    </div>
+                    <div style="font-size: 12px; color: ${COLORS.textSecondary}; margin-top: 2px;">
+                        Добавлен: ${new Date(item.addedDate).toLocaleDateString()}
+                    </div>
+                `;
+
+                const buttonsContainer = document.createElement('div');
+                buttonsContainer.style.cssText = `
+                    display: flex;
+                    justify-content: flex-end;
+                    gap: 6px;
+                    margin-top: 10px;
+                `;
+
+                const chartBtn = document.createElement('button');
+                chartBtn.title = 'Показать график цены';
+                chartBtn.style.cssText = `
+                    padding: 6px 12px;
+                    background: rgba(255,255,255,0.1);
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 13px;
+                    color: ${COLORS.text};
+                    transition: all 0.2s;
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                `;
+                chartBtn.innerHTML = '📈 График';
+                chartBtn.addEventListener('mouseover', () => chartBtn.style.background = 'rgba(255,255,255,0.15)');
+                chartBtn.addEventListener('mouseout', () => chartBtn.style.background = 'rgba(255,255,255,0.1)');
+                chartBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    showPriceChart(item);
+                });
+
+                const removeBtn = document.createElement('button');
+                removeBtn.title = 'Удалить из отслеживания';
+                removeBtn.style.cssText = `
+                    padding: 6px 12px;
+                    background: rgba(255, 100, 100, 0.1);
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 13px;
+                    color: ${COLORS.error};
+                    transition: all 0.2s;
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                `;
+                removeBtn.innerHTML = '✕ Удалить';
+                removeBtn.addEventListener('mouseover', () => removeBtn.style.background = 'rgba(255, 100, 100, 0.2)');
+                removeBtn.addEventListener('mouseout', () => removeBtn.style.background = 'rgba(255, 100, 100, 0.1)');
+                removeBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    removeTrackedItem(item.article);
+                    refreshPanel();
+                });
+
+                buttonsContainer.appendChild(chartBtn);
+                buttonsContainer.appendChild(removeBtn);
+
+                itemEl.appendChild(itemName);
+                itemEl.appendChild(priceInfo);
+                itemEl.appendChild(buttonsContainer);
+                trackedItemsContainer.appendChild(itemEl);
+            });
+        }
+
+        trackingContainer.appendChild(trackedItemsContainer);
+
+        if (CONFIG.lastPriceCheckTime) {
+            const lastCheckTime = new Date(CONFIG.lastPriceCheckTime);
+            const lastCheck = document.createElement('div');
+            lastCheck.textContent = `Последняя проверка: ${lastCheckTime.toLocaleDateString('ru-RU')} ${lastCheckTime.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'})}`;
+            lastCheck.style.cssText = `
+                font-size: 12px;
+                color: ${COLORS.textSecondary};
+                text-align: right;
+                margin-top: 10px;
+            `;
+            trackingContainer.appendChild(lastCheck);
+        }
     }
 
-    // Создает элемент переключателя
+    // Создание переключателя
     function createToggle(label, icon, checked, onChange) {
         const container = document.createElement('div');
         container.style.cssText = `
             display: flex;
             align-items: center;
-            padding: 10px 0;
-            border-bottom: 1px solid #f0f0f0;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
         `;
 
         const iconEl = document.createElement('div');
@@ -997,7 +1304,7 @@
         labelEl.style.cssText = `
             font-weight: 500;
             font-size: 13px;
-            color: #333;
+            color: ${COLORS.text};
         `;
         textContainer.appendChild(labelEl);
         container.appendChild(textContainer);
@@ -1029,7 +1336,7 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background-color: #ccc;
+            background-color: #444;
             transition: .4s;
             border-radius: 22px;
         `;
@@ -1055,10 +1362,10 @@
 
         const updateToggleStyle = () => {
             if (toggleInput.checked) {
-                toggleSlider.style.backgroundColor = '#0066ff';
+                toggleSlider.style.backgroundColor = COLORS.primary;
                 toggleKnob.style.transform = 'translateX(18px)';
             } else {
-                toggleSlider.style.backgroundColor = '#ccc';
+                toggleSlider.style.backgroundColor = '#444';
                 toggleKnob.style.transform = 'translateX(0)';
             }
         };
@@ -1068,19 +1375,29 @@
         return container;
     }
 
-    // Создает кнопку активации панели управления
+    // Создание кнопки активации панели
     function createPanelToggle() {
         if (document.getElementById('ozon-enhancer-toggle')) return;
 
         const toggle = document.createElement('button');
         toggle.id = 'ozon-enhancer-toggle';
-        toggle.innerHTML = '⚡ Ozon Enhancer';
+        toggle.innerHTML = '<span style="font-size: 16px; margin-right: 6px;">⚡</span> Ozon Enhancer';
         toggle.addEventListener('click', createControlPanel);
         document.body.appendChild(toggle);
         return toggle;
     }
 
-    // Сортирует отзывы по возрастанию рейтинга
+    // Проверка, открыта ли галерея изображений
+    function isGalleryOpen() {
+        for (const selector of SELECTORS.gallerySelectors) {
+            if (document.querySelector(selector)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Сортировка отзывов по рейтингу
     function sortReviews() {
         if (!CONFIG.sortReviews || isSortingApplied) return;
         if (!location.pathname.includes('/product/')) return;
@@ -1096,7 +1413,7 @@
         }
     }
 
-    // Инъекция стилей
+    // Добавление стилей
     GM_addStyle(`
         #ozon-enhancer-panel {
             transition: all 0.3s ease;
@@ -1107,16 +1424,16 @@
             position: fixed !important;
             top: 10px !important;
             right: 10px !important;
-            background: linear-gradient(135deg, #0066ff 0%, #0048cc 100%) !important;
-            color: white !important;
+            background: linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.primaryVariant} 100%) !important;
+            color: ${COLORS.background} !important;
             border: none !important;
             border-radius: 6px !important;
-            padding: 9px 16px !important;
+            padding: 10px 16px !important;
             cursor: pointer !important;
             z-index: 2147483647 !important;
             font-size: 14px !important;
             font-weight: 600 !important;
-            box-shadow: 0 5px 15px rgba(0,102,255,0.4) !important;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.4) !important;
             transition: all 0.2s ease !important;
             display: flex;
             align-items: center;
@@ -1124,9 +1441,9 @@
         }
 
         #ozon-enhancer-toggle:hover {
-            background: linear-gradient(135deg, #0052d9 0%, #003cb0 100%) !important;
+            background: linear-gradient(135deg, #9a65d1 0%, #5d3a9e 100%) !important;
             transform: translateY(-1px) !important;
-            box-shadow: 0 6px 16px rgba(0,102,255,0.5) !important;
+            box-shadow: 0 6px 16px rgba(0,0,0,0.5) !important;
         }
 
         #ozon-enhancer-toggle:active {
@@ -1134,13 +1451,24 @@
         }
 
         #ozon-tracked-items::-webkit-scrollbar {
-            width: 5px;
+            width: 6px;
         }
         #ozon-tracked-items::-webkit-scrollbar-track {
-            background: #f1f1f1;
+            background: rgba(255,255,255,0.05);
         }
         #ozon-tracked-items::-webkit-scrollbar-thumb {
-            background: #c1c1c1;
+            background: ${COLORS.primary};
+            border-radius: 4px;
+        }
+
+        #ozon-panel-content::-webkit-scrollbar {
+            width: 6px;
+        }
+        #ozon-panel-content::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        #ozon-panel-content::-webkit-scrollbar-thumb {
+            background: ${COLORS.primary};
             border-radius: 4px;
         }
 
@@ -1148,9 +1476,19 @@
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
+
+        @keyframes slideIn {
+            from { transform: translateX(-20px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
     `);
 
-    // Отслеживание изменений URL
+    // Обработчики изменения URL
     const updateState = (type) => {
         const orig = history[type];
         return function() {
@@ -1164,17 +1502,22 @@
     history.replaceState = updateState('replaceState');
     window.addEventListener('popstate', () => window.dispatchEvent(new Event('locationchange')));
 
-    // Основная функция инициализации
+    // Инициализация скрипта
     function init() {
         createPanelToggle();
         sortReviews();
         expandDescription();
 
-        // Наблюдатель за изменениями DOM
         const observer = new MutationObserver(() => {
             createPanelToggle();
             isDescriptionExpanded = false;
             expandDescription();
+
+            // Скрываем кнопку при открытии галереи
+            const toggleBtn = document.getElementById('ozon-enhancer-toggle');
+            if (toggleBtn) {
+                toggleBtn.style.display = isGalleryOpen() ? 'none' : 'flex';
+            }
         });
 
         observer.observe(document.body, {
@@ -1182,7 +1525,7 @@
             subtree: true
         });
 
-        // Периодическая проверка описания
+        // Периодическая попытка раскрыть описание
         let expandAttempts = 0;
         const expandInterval = setInterval(() => {
             if (!location.pathname.includes('/product/')) return;
@@ -1194,8 +1537,17 @@
             expandAttempts++;
         }, 5000);
 
-        // Периодическая проверка цен (каждые 2 часа)
-        setInterval(checkTrackedPrices, 2 * 60 * 60 * 1000);
+        // Периодическая проверка цен
+        setInterval(() => checkTrackedPrices(), 6 * 60 * 60 * 1000);
+        setTimeout(() => checkTrackedPrices(), 60000);
+
+        // Периодическая проверка состояния галереи
+        setInterval(() => {
+            const toggleBtn = document.getElementById('ozon-enhancer-toggle');
+            if (toggleBtn) {
+                toggleBtn.style.display = isGalleryOpen() ? 'none' : 'flex';
+            }
+        }, 1000);
     }
 
     // Запуск скрипта
@@ -1205,16 +1557,12 @@
         setTimeout(init, 1000);
     }
 
-    // Обработчик изменения URL
+    // Обработка смены URL
     window.addEventListener('locationchange', () => {
         isSortingApplied = false;
         isDescriptionExpanded = false;
         sortReviews();
         expandDescription();
-
-        if (panelCreated) {
-            panelCreated = false;
-            createControlPanel();
-        }
+        if (panelCreated) refreshPanel();
     });
 })();
