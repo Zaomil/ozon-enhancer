@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          Ozon Interface Enhancer
 // @namespace     https://github.com/Zaomil
-// @version       1.0.5
+// @version       1.0.6
 // @description   Улучшает интерфейс Ozon: сортирует отзывы, раскрывает описание, отслеживает цены
 // @author        Zaomil
 // @license       MIT
@@ -26,7 +26,7 @@
         sortReviews: true,
         expandDescription: true,
         trackPrices: true,
-        maxTrackedItems: 3,  // Ограничение до 3 товаров
+        maxTrackedItems: 5,
         priceDropNotifications: true
     };
 
@@ -476,6 +476,7 @@
             justify-content: center;
             z-index: 20000;
             backdrop-filter: blur(4px);
+            animation: fadeIn 0.4s ease-out;
         `;
 
         const modalContent = document.createElement('div');
@@ -483,13 +484,15 @@
             background: ${COLORS.surface};
             border-radius: 12px;
             padding: 20px;
-            width: min(90vw, 600px);
+            width: min(90vw, 700px);
             max-height: 90vh;
             overflow: hidden;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
             color: ${COLORS.text};
             display: flex;
             flex-direction: column;
+            transform: scale(0.95);
+            animation: scaleIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
         `;
 
         modal.appendChild(modalContent);
@@ -502,6 +505,7 @@
             margin-bottom: 15px;
             text-align: center;
             color: ${COLORS.primary};
+            text-shadow: 0 0 10px rgba(187, 134, 252, 0.3);
         `;
         modalContent.appendChild(title);
 
@@ -510,30 +514,41 @@
             display: flex;
             justify-content: space-around;
             margin-bottom: 15px;
-            background: rgba(255,255,255,0.05);
+            background: linear-gradient(45deg, rgba(30,30,30,0.8), rgba(50,50,50,0.4));
             border-radius: 8px;
-            padding: 10px;
+            padding: 12px;
+            gap: 10px;
+            flex-wrap: wrap;
         `;
 
         const initialPrice = item.initialPrice;
         const currentPrice = item.currentPrice;
         const minPrice = Math.min(...item.priceHistory.map(p => p.price));
         const maxPrice = Math.max(...item.priceHistory.map(p => p.price));
+        const diff = currentPrice - initialPrice;
+        const diffPercent = ((Math.abs(diff) / initialPrice) * 100).toFixed(1);
 
         infoRow.innerHTML = `
-            <div style="text-align: center;">
+            <div style="text-align: center; min-width: 120px;">
                 <div style="font-size: 12px; color: ${COLORS.textSecondary}">Текущая</div>
-                <div style="font-weight: 700; font-size: 16px; color: ${currentPrice < initialPrice ? COLORS.success : COLORS.text}">${currentPrice.toFixed(2)} BYN</div>
+                <div style="font-weight: 700; font-size: 16px; color: ${currentPrice < initialPrice ? COLORS.success : COLORS.text}">
+                    ${currentPrice.toFixed(2)} BYN
+                </div>
+                <div style="font-size: 12px; color: ${diff === 0 ? COLORS.textSecondary : diff < 0 ? COLORS.success : COLORS.error}; margin-top: 4px;">
+                    ${diff === 0 ? 'Без изменений' :
+                     diff < 0 ? `▼ ${Math.abs(diff).toFixed(2)} BYN (${diffPercent}%)` :
+                     `▲ ${diff.toFixed(2)} BYN (${diffPercent}%)`}
+                </div>
             </div>
-            <div style="text-align: center;">
+            <div style="text-align: center; min-width: 120px;">
                 <div style="font-size: 12px; color: ${COLORS.textSecondary}">Начальная</div>
                 <div style="font-weight: 700; font-size: 16px;">${initialPrice.toFixed(2)} BYN</div>
             </div>
-            <div style="text-align: center;">
+            <div style="text-align: center; min-width: 120px;">
                 <div style="font-size: 12px; color: ${COLORS.textSecondary}">Минимальная</div>
                 <div style="font-weight: 700; font-size: 16px; color: ${COLORS.success}">${minPrice.toFixed(2)} BYN</div>
             </div>
-            <div style="text-align: center;">
+            <div style="text-align: center; min-width: 120px;">
                 <div style="font-size: 12px; color: ${COLORS.textSecondary}">Максимальная</div>
                 <div style="font-weight: 700; font-size: 16px; color: ${COLORS.error}">${maxPrice.toFixed(2)} BYN</div>
             </div>
@@ -547,7 +562,7 @@
             modalContent.appendChild(message);
         } else {
             const chartContainer = document.createElement('div');
-            chartContainer.style.cssText = 'height: 250px; position: relative;';
+            chartContainer.style.cssText = 'height: 300px; position: relative;';
             modalContent.appendChild(chartContainer);
 
             const canvas = document.createElement('canvas');
@@ -586,30 +601,26 @@
                 const y = (price) => padding.top + graphHeight - ((price - minVal) / range * graphHeight);
 
                 // Рисование сетки
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
 
                 // Горизонтальные линии сетки
-                const horizontalLineCount = 5;
+                const horizontalLineCount = 6;
                 for (let i = 0; i < horizontalLineCount; i++) {
                     const value = minVal + (i / (horizontalLineCount - 1)) * range;
                     const yCoord = y(value);
                     ctx.moveTo(padding.left, yCoord);
                     ctx.lineTo(canvas.width - padding.right, yCoord);
-                }
-                ctx.stroke();
 
-                // Подписи значений по оси Y
-                ctx.fillStyle = COLORS.textSecondary;
-                ctx.textAlign = 'right';
-                ctx.textBaseline = 'middle';
-                ctx.font = '12px sans-serif';
-                for (let i = 0; i < horizontalLineCount; i++) {
-                    const value = minVal + (i / (horizontalLineCount - 1)) * range;
-                    const yCoord = y(value);
+                    // Подписи значений по оси Y
+                    ctx.fillStyle = COLORS.textSecondary;
+                    ctx.textAlign = 'right';
+                    ctx.textBaseline = 'middle';
+                    ctx.font = '12px sans-serif';
                     ctx.fillText(value.toFixed(2), padding.left - 10, yCoord);
                 }
+                ctx.stroke();
 
                 // Рисование осей
                 ctx.strokeStyle = COLORS.text;
@@ -622,6 +633,11 @@
                 ctx.moveTo(padding.left, padding.top + graphHeight);
                 ctx.lineTo(canvas.width - padding.right, padding.top + graphHeight);
                 ctx.stroke();
+
+                // Градиент под графиком
+                const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + graphHeight);
+                gradient.addColorStop(0, 'rgba(187, 134, 252, 0.3)');
+                gradient.addColorStop(1, 'rgba(187, 134, 252, 0.05)');
 
                 // Определение важных точек
                 const importantPoints = [
@@ -674,11 +690,7 @@
                     }
                 });
 
-                // Градиент под графиком
-                const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + graphHeight);
-                gradient.addColorStop(0, 'rgba(187, 134, 252, 0.3)');
-                gradient.addColorStop(1, 'rgba(187, 134, 252, 0.05)');
-
+                // Заливка под графиком
                 ctx.beginPath();
                 ctx.moveTo(x(0), y(prices[0]));
                 for (let i = 1; i < prices.length; i++) {
@@ -701,7 +713,10 @@
                 ctx.lineJoin = 'round';
                 ctx.lineCap = 'round';
                 ctx.strokeStyle = COLORS.primary;
+                ctx.shadowColor = 'rgba(187, 134, 252, 0.5)';
+                ctx.shadowBlur = 8;
                 ctx.stroke();
+                ctx.shadowBlur = 0;
 
                 // Точки на графике
                 ctx.fillStyle = COLORS.primary;
@@ -709,14 +724,17 @@
                     const xCoord = x(point.index);
                     const yCoord = y(prices[point.index]);
                     ctx.beginPath();
-                    ctx.arc(xCoord, yCoord, 6, 0, Math.PI * 2);
+                    ctx.arc(xCoord, yCoord, 8, 0, Math.PI * 2);
                     ctx.fill();
+                    ctx.strokeStyle = COLORS.background;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
                 });
 
                 // Подписи цен для важных точек
                 ctx.fillStyle = COLORS.text;
                 ctx.textBaseline = 'bottom';
-                ctx.font = '12px sans-serif';
+                ctx.font = 'bold 13px sans-serif';
 
                 importantPoints.forEach(point => {
                     const xCoord = x(point.index);
@@ -732,7 +750,8 @@
                     }
 
                     if (canDraw) {
-                        ctx.fillText(point.label, xCoord, yCoord - 10);
+                        ctx.fillStyle = COLORS.primary;
+                        ctx.fillText(point.label, xCoord, yCoord - 12);
                         drawnPositions.push(xCoord);
                     }
                 });
@@ -745,13 +764,23 @@
             display: block;
             margin: 15px auto 0;
             padding: 10px 25px;
-            background: ${COLORS.primary};
+            background: linear-gradient(45deg, ${COLORS.primary}, ${COLORS.primaryVariant});
             color: ${COLORS.background};
             border: none;
             border-radius: 6px;
             cursor: pointer;
             font-weight: 600;
+            transition: all 0.2s;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
         `;
+        closeBtn.addEventListener('mouseover', () => {
+            closeBtn.style.transform = 'scale(1.03)';
+            closeBtn.style.boxShadow = '0 6px 12px rgba(0,0,0,0.3)';
+        });
+        closeBtn.addEventListener('mouseout', () => {
+            closeBtn.style.transform = 'scale(1)';
+            closeBtn.style.boxShadow = '0 4px 10px rgba(0,0,0,0.2)';
+        });
         closeBtn.addEventListener('click', () => modal.remove());
         modalContent.appendChild(closeBtn);
 
@@ -778,13 +807,15 @@
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
             z-index: 10000;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            width: 360px;
+            width: 380px;
             max-height: 80vh;
             overflow: hidden;
             border: 1px solid rgba(255,255,255,0.1);
             display: flex;
             flex-direction: column;
             color: ${COLORS.text};
+            transform: translateY(10px);
+            animation: slideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
         `;
 
         const header = document.createElement('div');
@@ -793,13 +824,14 @@
             font-weight: 600;
             font-size: 16px;
             padding: 14px 16px;
-            background: ${COLORS.background};
+            background: linear-gradient(45deg, ${COLORS.background}, rgba(30,30,30,0.9));
             color: ${COLORS.primary};
             display: flex;
             align-items: center;
             gap: 8px;
             position: relative;
             border-bottom: 1px solid rgba(255,255,255,0.1);
+            text-shadow: 0 0 10px rgba(187, 134, 252, 0.3);
         `;
 
         panel.appendChild(header);
@@ -823,11 +855,14 @@
                 font-weight: 500;
                 transition: all 0.2s;
                 border-bottom: 2px solid transparent;
+                flex: 1;
+                text-align: center;
             `;
 
             if (currentTab === id) {
                 tab.style.borderBottomColor = COLORS.primary;
                 tab.style.color = COLORS.primary;
+                tab.style.background = 'rgba(187, 134, 252, 0.1)';
             } else {
                 tab.style.color = COLORS.textSecondary;
             }
@@ -879,11 +914,20 @@
             line-height: 1;
             transition: all 0.2s;
         `;
-        closeBtn.addEventListener('mouseover', () => closeBtn.style.background = 'rgba(255,255,255,0.2)');
-        closeBtn.addEventListener('mouseout', () => closeBtn.style.background = 'rgba(255,255,255,0.1)');
+        closeBtn.addEventListener('mouseover', () => {
+            closeBtn.style.background = 'rgba(255,255,255,0.2)';
+            closeBtn.style.transform = 'rotate(90deg)';
+        });
+        closeBtn.addEventListener('mouseout', () => {
+            closeBtn.style.background = 'rgba(255,255,255,0.1)';
+            closeBtn.style.transform = 'rotate(0)';
+        });
         closeBtn.addEventListener('click', () => {
-            panel.remove();
-            panelCreated = false;
+            panel.style.animation = 'fadeOut 0.3s forwards';
+            setTimeout(() => {
+                panel.remove();
+                panelCreated = false;
+            }, 300);
         });
         header.appendChild(closeBtn);
 
@@ -901,9 +945,11 @@
                 if (tab.dataset.tab === currentTab) {
                     tab.style.borderBottomColor = COLORS.primary;
                     tab.style.color = COLORS.primary;
+                    tab.style.background = 'rgba(187, 134, 252, 0.1)';
                 } else {
                     tab.style.borderBottomColor = 'transparent';
                     tab.style.color = COLORS.textSecondary;
+                    tab.style.background = 'transparent';
                 }
             });
         }
@@ -1010,7 +1056,7 @@
         refreshButton.style.cssText = `
             background: rgba(255,255,255,0.1);
             border: none;
-            padding: 8px 12px;
+            padding: 10px;
             border-radius: 6px;
             cursor: pointer;
             font-size: 13px;
@@ -1023,8 +1069,14 @@
             transition: all 0.2s;
         `;
         refreshButton.innerHTML = '🔄 ' + refreshButton.textContent;
-        refreshButton.addEventListener('mouseover', () => refreshButton.style.background = 'rgba(255,255,255,0.15)');
-        refreshButton.addEventListener('mouseout', () => refreshButton.style.background = 'rgba(255,255,255,0.1)');
+        refreshButton.addEventListener('mouseover', () => {
+            refreshButton.style.background = 'rgba(255,255,255,0.15)';
+            refreshButton.style.transform = 'translateY(-1px)';
+        });
+        refreshButton.addEventListener('mouseout', () => {
+            refreshButton.style.background = 'rgba(255,255,255,0.1)';
+            refreshButton.style.transform = 'none';
+        });
         refreshButton.addEventListener('click', () => {
             refreshButton.textContent = 'Обновление...';
             refreshButton.disabled = true;
@@ -1040,10 +1092,10 @@
             const addButton = document.createElement('button');
             addButton.textContent = 'Добавить текущий';
             addButton.style.cssText = `
-                background: ${COLORS.primary};
+                background: linear-gradient(45deg, ${COLORS.primary}, ${COLORS.primaryVariant});
                 color: ${COLORS.background};
                 border: none;
-                padding: 8px 12px;
+                padding: 10px;
                 border-radius: 6px;
                 cursor: pointer;
                 font-size: 13px;
@@ -1054,10 +1106,17 @@
                 gap: 6px;
                 font-weight: 500;
                 transition: all 0.2s;
+                box-shadow: 0 4px 10px rgba(0,0,0,0.2);
             `;
             addButton.innerHTML = '➕ ' + addButton.textContent;
-            addButton.addEventListener('mouseover', () => addButton.style.opacity = '0.9');
-            addButton.addEventListener('mouseout', () => addButton.style.opacity = '1');
+            addButton.addEventListener('mouseover', () => {
+                addButton.style.transform = 'scale(1.03)';
+                addButton.style.boxShadow = '0 6px 12px rgba(0,0,0,0.3)';
+            });
+            addButton.addEventListener('mouseout', () => {
+                addButton.style.transform = 'none';
+                addButton.style.boxShadow = '0 4px 10px rgba(0,0,0,0.2)';
+            });
             addButton.addEventListener('click', () => trackCurrentProduct() && refreshPanel());
             actionsRow.appendChild(addButton);
         }
@@ -1083,12 +1142,21 @@
             background: rgba(255,255,255,0.05);
             color: ${COLORS.text};
             outline: none;
+            transition: all 0.2s;
         `;
+        articleInput.addEventListener('focus', () => {
+            articleInput.style.borderColor = COLORS.primary;
+            articleInput.style.boxShadow = `0 0 0 2px ${COLORS.primary}33`;
+        });
+        articleInput.addEventListener('blur', () => {
+            articleInput.style.borderColor = 'rgba(255,255,255,0.1)';
+            articleInput.style.boxShadow = 'none';
+        });
 
         const manualAddButton = document.createElement('button');
         manualAddButton.textContent = 'Добавить';
         manualAddButton.style.cssText = `
-            background: ${COLORS.primary};
+            background: linear-gradient(45deg, ${COLORS.primary}, ${COLORS.primaryVariant});
             color: ${COLORS.background};
             border: none;
             padding: 10px 16px;
@@ -1098,9 +1166,16 @@
             font-weight: 500;
             white-space: nowrap;
             transition: all 0.2s;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
         `;
-        manualAddButton.addEventListener('mouseover', () => manualAddButton.style.opacity = '0.9');
-        manualAddButton.addEventListener('mouseout', () => manualAddButton.style.opacity = '1');
+        manualAddButton.addEventListener('mouseover', () => {
+            manualAddButton.style.transform = 'scale(1.03)';
+            manualAddButton.style.boxShadow = '0 6px 12px rgba(0,0,0,0.3)';
+        });
+        manualAddButton.addEventListener('mouseout', () => {
+            manualAddButton.style.transform = 'none';
+            manualAddButton.style.boxShadow = '0 4px 10px rgba(0,0,0,0.2)';
+        });
         manualAddButton.addEventListener('click', () => {
             const article = articleInput.value.trim();
             if (!article) {
@@ -1152,14 +1227,21 @@
             CONFIG.trackedItems.forEach(item => {
                 const itemEl = document.createElement('div');
                 itemEl.style.cssText = `
-                    background: rgba(255,255,255,0.03);
+                    background: linear-gradient(45deg, rgba(30,30,30,0.8), rgba(50,50,50,0.4));
                     border-radius: 8px;
                     padding: 12px;
                     position: relative;
                     transition: all 0.2s;
+                    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
                 `;
-                itemEl.addEventListener('mouseover', () => itemEl.style.background = 'rgba(255,255,255,0.06)');
-                itemEl.addEventListener('mouseout', () => itemEl.style.background = 'rgba(255,255,255,0.03)');
+                itemEl.addEventListener('mouseover', () => {
+                    itemEl.style.transform = 'translateY(-2px)';
+                    itemEl.style.boxShadow = '0 6px 12px rgba(0,0,0,0.2)';
+                });
+                itemEl.addEventListener('mouseout', () => {
+                    itemEl.style.transform = 'none';
+                    itemEl.style.boxShadow = '0 2px 6px rgba(0,0,0,0.1)';
+                });
 
                 const itemName = document.createElement('a');
                 itemName.href = item.url;
@@ -1173,7 +1255,14 @@
                     text-decoration: none;
                     color: ${COLORS.primary};
                     font-size: 14px;
+                    transition: all 0.2s;
                 `;
+                itemName.addEventListener('mouseover', () => {
+                    itemName.style.textShadow = `0 0 8px ${COLORS.primary}80`;
+                });
+                itemName.addEventListener('mouseout', () => {
+                    itemName.style.textShadow = 'none';
+                });
 
                 const priceInfo = document.createElement('div');
                 const initialPrice = item.initialPrice;
@@ -1219,8 +1308,14 @@
                     gap: 4px;
                 `;
                 chartBtn.innerHTML = '📈 График';
-                chartBtn.addEventListener('mouseover', () => chartBtn.style.background = 'rgba(255,255,255,0.15)');
-                chartBtn.addEventListener('mouseout', () => chartBtn.style.background = 'rgba(255,255,255,0.1)');
+                chartBtn.addEventListener('mouseover', () => {
+                    chartBtn.style.background = 'rgba(255,255,255,0.15)';
+                    chartBtn.style.transform = 'translateY(-1px)';
+                });
+                chartBtn.addEventListener('mouseout', () => {
+                    chartBtn.style.background = 'rgba(255,255,255,0.1)';
+                    chartBtn.style.transform = 'none';
+                });
                 chartBtn.addEventListener('click', (e) => {
                     e.preventDefault();
                     showPriceChart(item);
@@ -1242,8 +1337,14 @@
                     gap: 4px;
                 `;
                 removeBtn.innerHTML = '✕ Удалить';
-                removeBtn.addEventListener('mouseover', () => removeBtn.style.background = 'rgba(255, 100, 100, 0.2)');
-                removeBtn.addEventListener('mouseout', () => removeBtn.style.background = 'rgba(255, 100, 100, 0.1)');
+                removeBtn.addEventListener('mouseover', () => {
+                    removeBtn.style.background = 'rgba(255, 100, 100, 0.2)';
+                    removeBtn.style.transform = 'translateY(-1px)';
+                });
+                removeBtn.addEventListener('mouseout', () => {
+                    removeBtn.style.background = 'rgba(255, 100, 100, 0.1)';
+                    removeBtn.style.transform = 'none';
+                });
                 removeBtn.addEventListener('click', (e) => {
                     e.preventDefault();
                     removeTrackedItem(item.article);
@@ -1293,6 +1394,7 @@
             margin-right: 10px;
             width: 22px;
             text-align: center;
+            transition: all 0.3s;
         `;
         container.appendChild(iconEl);
 
@@ -1305,6 +1407,7 @@
             font-weight: 500;
             font-size: 13px;
             color: ${COLORS.text};
+            transition: all 0.3s;
         `;
         textContainer.appendChild(labelEl);
         container.appendChild(textContainer);
@@ -1339,6 +1442,7 @@
             background-color: #444;
             transition: .4s;
             border-radius: 22px;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
         `;
 
         const toggleKnob = document.createElement('span');
@@ -1352,7 +1456,7 @@
             background-color: white;
             transition: .4s;
             border-radius: 50%;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
         `;
 
         toggleSlider.appendChild(toggleKnob);
@@ -1363,10 +1467,16 @@
         const updateToggleStyle = () => {
             if (toggleInput.checked) {
                 toggleSlider.style.backgroundColor = COLORS.primary;
+                toggleSlider.style.boxShadow = `inset 0 0 8px ${COLORS.primary}80`;
                 toggleKnob.style.transform = 'translateX(18px)';
+                iconEl.style.textShadow = `0 0 8px ${COLORS.primary}80`;
+                iconEl.style.transform = 'scale(1.1)';
             } else {
                 toggleSlider.style.backgroundColor = '#444';
+                toggleSlider.style.boxShadow = 'inset 0 1px 3px rgba(0,0,0,0.3)';
                 toggleKnob.style.transform = 'translateX(0)';
+                iconEl.style.textShadow = 'none';
+                iconEl.style.transform = 'scale(1)';
             }
         };
         toggleInput.addEventListener('change', updateToggleStyle);
@@ -1417,7 +1527,6 @@
     GM_addStyle(`
         #ozon-enhancer-panel {
             transition: all 0.3s ease;
-            animation: fadeIn 0.3s ease-out;
         }
 
         #ozon-enhancer-toggle {
@@ -1438,16 +1547,18 @@
             display: flex;
             align-items: center;
             gap: 6px;
+            animation: pulse 2s infinite;
         }
 
         #ozon-enhancer-toggle:hover {
             background: linear-gradient(135deg, #9a65d1 0%, #5d3a9e 100%) !important;
-            transform: translateY(-1px) !important;
-            box-shadow: 0 6px 16px rgba(0,0,0,0.5) !important;
+            transform: translateY(-2px) scale(1.05) !important;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.5) !important;
+            animation: none;
         }
 
         #ozon-enhancer-toggle:active {
-            transform: translateY(0) !important;
+            transform: translateY(0) scale(1) !important;
         }
 
         #ozon-tracked-items::-webkit-scrollbar {
@@ -1473,18 +1584,29 @@
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes scaleIn {
+            from { transform: scale(0.95); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
         }
 
         @keyframes slideIn {
-            from { transform: translateX(-20px); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
+            from { transform: translateY(10px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
         }
 
         @keyframes fadeOut {
             from { opacity: 1; }
             to { opacity: 0; }
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(187, 134, 252, 0.5); }
+            70% { box-shadow: 0 0 0 10px rgba(187, 134, 252, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(187, 134, 252, 0); }
         }
     `);
 
