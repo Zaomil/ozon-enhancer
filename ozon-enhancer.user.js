@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          Ozon Interface Enhancer
 // @namespace     https://github.com/Zaomil
-// @version       1.0.6
+// @version       1.0.7
 // @description   Улучшает интерфейс Ozon: сортирует отзывы, раскрывает описание, отслеживает цены
 // @author        Zaomil
 // @license       MIT
@@ -12,6 +12,8 @@
 // @grant         GM_addStyle
 // @grant         GM_xmlhttpRequest
 // @grant         GM_notification
+// @grant         GM_setClipboard
+// @grant         GM_download
 // @run-at        document-idle
 // @homepageURL   https://github.com/Zaomil/ozon-enhancer
 // @supportURL    https://github.com/Zaomil/ozon-enhancer/issues
@@ -26,7 +28,7 @@
         sortReviews: true,
         expandDescription: true,
         trackPrices: true,
-        maxTrackedItems: 5,
+        maxTrackedItems: 6,
         priceDropNotifications: true
     };
 
@@ -102,6 +104,9 @@
     let panelCreated = false;
     let isDescriptionExpanded = false;
     let currentTab = CONFIG.currentPanelTab;
+    let notificationQueue = [];
+    let isNotificationShowing = false;
+    let dragStartIndex = null;
 
     // Селекторы для элементов страницы
     const SELECTORS = {
@@ -365,26 +370,40 @@
         CONFIG.trackedItems = updatedItems;
 
         if (priceDropDetected && CONFIG.priceDropNotifications) {
-            showPriceDropNotification(notificationItem, oldPrice, newPrice);
+            const priceDiff = (oldPrice - newPrice).toFixed(2);
+            const discount = ((1 - newPrice / oldPrice) * 100).toFixed(0);
+
+            notificationQueue.push({
+                title: "🔔 Цена снизилась!",
+                text: `${notificationItem.name}: ${newPrice.toFixed(2)} BYN (↓${priceDiff} BYN)`,
+                image: "https://ozon.by/favicon.ico",
+                url: notificationItem.url
+            });
+
+            processNotificationQueue();
         }
 
         return priceDropDetected;
     }
 
-    // Уведомление о снижении цены
-    function showPriceDropNotification(item, oldPrice, newPrice) {
-        if (!CONFIG.priceDropNotifications) return;
+    // Обработка очереди уведомлений
+    function processNotificationQueue() {
+        if (isNotificationShowing || notificationQueue.length === 0) return;
 
-        const priceDiff = (oldPrice - newPrice).toFixed(2);
-        const discount = ((1 - newPrice / oldPrice) * 100).toFixed(0);
+        isNotificationShowing = true;
+        const notification = notificationQueue.shift();
 
         if (GM_notification) {
             GM_notification({
-                title: "🔔 Цена снизилась!",
-                text: `${item.name}: ${newPrice.toFixed(2)} BYN (↓${priceDiff} BYN)`,
-                image: "https://ozon.by/favicon.ico",
-                timeout: 8000,
-                onclick: () => window.open(item.url, '_blank')
+                title: notification.title,
+                text: notification.text,
+                image: notification.image,
+                timeout: 5000,
+                onclick: () => window.open(notification.url, '_blank'),
+                ondone: () => {
+                    isNotificationShowing = false;
+                    setTimeout(processNotificationQueue, 1000);
+                }
             });
         }
     }
@@ -455,10 +474,10 @@
         }
     }
 
-    // Форматирование даты в формате dd/mm/yyyy
+    // Форматирование даты в формате dd.mm.yyyy
     function formatDate(dateString) {
         const [year, month, day] = dateString.split('-');
-        return `${day}/${month}/${year}`;
+        return `${day}.${month}.${year}`;
     }
 
     // Показ графика цены товара
@@ -588,24 +607,19 @@
                 const maxVal = Math.max(...prices);
                 const range = maxVal - minVal || 1;
 
-                // Увеличенные отступы для осей
                 const padding = { top: 30, right: 30, bottom: 50, left: 60 };
                 const graphWidth = canvas.width - padding.left - padding.right;
                 const graphHeight = canvas.height - padding.top - padding.bottom;
 
-                // Очистка холста
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-                // Функции преобразования значений
                 const x = (index) => padding.left + (index / (prices.length - 1)) * graphWidth;
                 const y = (price) => padding.top + graphHeight - ((price - minVal) / range * graphHeight);
 
-                // Рисование сетки
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
 
-                // Горизонтальные линии сетки
                 const horizontalLineCount = 6;
                 for (let i = 0; i < horizontalLineCount; i++) {
                     const value = minVal + (i / (horizontalLineCount - 1)) * range;
@@ -613,7 +627,6 @@
                     ctx.moveTo(padding.left, yCoord);
                     ctx.lineTo(canvas.width - padding.right, yCoord);
 
-                    // Подписи значений по оси Y
                     ctx.fillStyle = COLORS.textSecondary;
                     ctx.textAlign = 'right';
                     ctx.textBaseline = 'middle';
@@ -622,24 +635,19 @@
                 }
                 ctx.stroke();
 
-                // Рисование осей
                 ctx.strokeStyle = COLORS.text;
                 ctx.lineWidth = 2;
                 ctx.beginPath();
-                // Ось Y
                 ctx.moveTo(padding.left, padding.top);
                 ctx.lineTo(padding.left, padding.top + graphHeight);
-                // Ось X
                 ctx.moveTo(padding.left, padding.top + graphHeight);
                 ctx.lineTo(canvas.width - padding.right, padding.top + graphHeight);
                 ctx.stroke();
 
-                // Градиент под графиком
                 const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + graphHeight);
                 gradient.addColorStop(0, 'rgba(187, 134, 252, 0.3)');
                 gradient.addColorStop(1, 'rgba(187, 134, 252, 0.05)');
 
-                // Определение важных точек
                 const importantPoints = [
                     { index: 0, label: `${prices[0].toFixed(2)} BYN`, date: dates[0] },
                     { index: prices.length - 1, label: `${prices[prices.length - 1].toFixed(2)} BYN`, date: dates[dates.length - 1] }
@@ -664,18 +672,15 @@
                     });
                 }
 
-                // Подписи дат по оси X
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'top';
                 ctx.fillStyle = COLORS.text;
                 ctx.font = '12px sans-serif';
 
-                // Убедимся, что даты не перекрываются
                 const drawnPositions = [];
                 importantPoints.forEach(point => {
                     const xCoord = x(point.index);
 
-                    // Проверка наложения
                     let canDraw = true;
                     for (const pos of drawnPositions) {
                         if (Math.abs(xCoord - pos) < 60) {
@@ -690,7 +695,6 @@
                     }
                 });
 
-                // Заливка под графиком
                 ctx.beginPath();
                 ctx.moveTo(x(0), y(prices[0]));
                 for (let i = 1; i < prices.length; i++) {
@@ -703,7 +707,6 @@
                 ctx.fillStyle = gradient;
                 ctx.fill();
 
-                // Линия графика
                 ctx.beginPath();
                 ctx.moveTo(x(0), y(prices[0]));
                 for (let i = 1; i < prices.length; i++) {
@@ -718,7 +721,6 @@
                 ctx.stroke();
                 ctx.shadowBlur = 0;
 
-                // Точки на графике
                 ctx.fillStyle = COLORS.primary;
                 importantPoints.forEach(point => {
                     const xCoord = x(point.index);
@@ -731,7 +733,6 @@
                     ctx.stroke();
                 });
 
-                // Подписи цен для важных точек
                 ctx.fillStyle = COLORS.text;
                 ctx.textBaseline = 'bottom';
                 ctx.font = 'bold 13px sans-serif';
@@ -740,7 +741,6 @@
                     const xCoord = x(point.index);
                     const yCoord = y(prices[point.index]);
 
-                    // Проверка наложения
                     let canDraw = true;
                     for (const pos of drawnPositions) {
                         if (Math.abs(xCoord - pos) < 40) {
@@ -758,11 +758,53 @@
             }, 100);
         }
 
+        const exportBtn = document.createElement('button');
+        exportBtn.textContent = 'Экспорт графика';
+        exportBtn.style.cssText = `
+            display: inline-block;
+            margin: 15px 5px 0;
+            padding: 10px 15px;
+            background: linear-gradient(45deg, ${COLORS.secondary}, #018786);
+            color: ${COLORS.background};
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        `;
+        exportBtn.addEventListener('mouseover', () => {
+            exportBtn.style.transform = 'scale(1.03)';
+            exportBtn.style.boxShadow = '0 6px 12px rgba(0,0,0,0.3)';
+        });
+        exportBtn.addEventListener('mouseout', () => {
+            exportBtn.style.transform = 'scale(1)';
+            exportBtn.style.boxShadow = '0 4px 10px rgba(0,0,0,0.2)';
+        });
+        exportBtn.addEventListener('click', () => {
+            const data = {
+                name: item.name,
+                article: item.article,
+                priceHistory: item.priceHistory
+            };
+            const json = JSON.stringify(data, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ozon_price_history_${item.article}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
         const closeBtn = document.createElement('button');
         closeBtn.textContent = 'Закрыть';
         closeBtn.style.cssText = `
-            display: block;
-            margin: 15px auto 0;
+            display: inline-block;
+            margin: 15px 5px 0;
             padding: 10px 25px;
             background: linear-gradient(45deg, ${COLORS.primary}, ${COLORS.primaryVariant});
             color: ${COLORS.background};
@@ -782,7 +824,12 @@
             closeBtn.style.boxShadow = '0 4px 10px rgba(0,0,0,0.2)';
         });
         closeBtn.addEventListener('click', () => modal.remove());
-        modalContent.appendChild(closeBtn);
+
+        const buttonsContainer = document.createElement('div');
+        buttonsContainer.style.textAlign = 'center';
+        buttonsContainer.appendChild(exportBtn);
+        buttonsContainer.appendChild(closeBtn);
+        modalContent.appendChild(buttonsContainer);
 
         document.body.appendChild(modal);
     }
@@ -1123,6 +1170,144 @@
 
         trackingContainer.appendChild(actionsRow);
 
+        const importExportRow = document.createElement('div');
+        importExportRow.style.cssText = `
+            display: flex;
+            gap: 8px;
+            margin: 12px 0 15px;
+        `;
+
+        const exportButton = document.createElement('button');
+        exportButton.textContent = 'Экспорт данных';
+        exportButton.style.cssText = `
+            flex: 1;
+            padding: 10px;
+            background: linear-gradient(45deg, ${COLORS.secondary}, #018786);
+            color: ${COLORS.background};
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        `;
+        exportButton.innerHTML = '📤 ' + exportButton.textContent;
+        exportButton.addEventListener('mouseover', () => {
+            exportButton.style.transform = 'scale(1.03)';
+            exportButton.style.boxShadow = '0 6px 12px rgba(0,0,0,0.3)';
+        });
+        exportButton.addEventListener('mouseout', () => {
+            exportButton.style.transform = 'none';
+            exportButton.style.boxShadow = '0 4px 10px rgba(0,0,0,0.2)';
+        });
+        exportButton.addEventListener('click', () => {
+            const data = JSON.stringify(CONFIG.trackedItems, null, 2);
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ozon_tracking_data_${new Date().toISOString().slice(0, 10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        const importButton = document.createElement('button');
+        importButton.textContent = 'Импорт данных';
+        importButton.style.cssText = `
+            flex: 1;
+            padding: 10px;
+            background: linear-gradient(45deg, ${COLORS.primary}, ${COLORS.primaryVariant});
+            color: ${COLORS.background};
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        `;
+        importButton.innerHTML = '📥 ' + importButton.textContent;
+        importButton.addEventListener('mouseover', () => {
+            importButton.style.transform = 'scale(1.03)';
+            importButton.style.boxShadow = '0 6px 12px rgba(0,0,0,0.3)';
+        });
+        importButton.addEventListener('mouseout', () => {
+            importButton.style.transform = 'none';
+            importButton.style.boxShadow = '0 4px 10px rgba(0,0,0,0.2)';
+        });
+        importButton.addEventListener('click', () => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.style.display = 'none';
+
+            input.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const importedData = JSON.parse(event.target.result);
+                        const currentItems = [...CONFIG.trackedItems];
+
+                        importedData.forEach(importedItem => {
+                            const existingIndex = currentItems.findIndex(item => item.article === importedItem.article);
+
+                            if (existingIndex >= 0) {
+                                const existingItem = currentItems[existingIndex];
+                                const mergedHistory = [...existingItem.priceHistory];
+
+                                importedItem.priceHistory.forEach(importedPrice => {
+                                    if (!mergedHistory.some(p => p.date === importedPrice.date)) {
+                                        mergedHistory.push(importedPrice);
+                                    }
+                                });
+
+                                mergedHistory.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                                currentItems[existingIndex] = {
+                                    ...existingItem,
+                                    priceHistory: mergedHistory,
+                                    initialPrice: Math.min(existingItem.initialPrice, importedItem.initialPrice),
+                                    currentPrice: importedItem.currentPrice || existingItem.currentPrice
+                                };
+                            } else {
+                                currentItems.push(importedItem);
+                            }
+                        });
+
+                        CONFIG.trackedItems = currentItems;
+                        refreshPanel();
+                        alert(`Успешно импортировано ${importedData.length} товаров`);
+                    } catch (error) {
+                        alert('Ошибка при импорте данных: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            });
+
+            document.body.appendChild(input);
+            input.click();
+            setTimeout(() => document.body.removeChild(input), 100);
+        });
+
+        importExportRow.appendChild(exportButton);
+        importExportRow.appendChild(importButton);
+        trackingContainer.appendChild(importExportRow);
+
         const manualAddForm = document.createElement('div');
         manualAddForm.style.cssText = `
             display: flex;
@@ -1224,8 +1409,10 @@
             `;
             trackedItemsContainer.appendChild(emptyState);
         } else {
-            CONFIG.trackedItems.forEach(item => {
+            CONFIG.trackedItems.forEach((item, index) => {
                 const itemEl = document.createElement('div');
+                itemEl.dataset.index = index;
+                itemEl.draggable = true;
                 itemEl.style.cssText = `
                     background: linear-gradient(45deg, rgba(30,30,30,0.8), rgba(50,50,50,0.4));
                     border-radius: 8px;
@@ -1233,6 +1420,7 @@
                     position: relative;
                     transition: all 0.2s;
                     box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+                    cursor: grab;
                 `;
                 itemEl.addEventListener('mouseover', () => {
                     itemEl.style.transform = 'translateY(-2px)';
@@ -1241,6 +1429,46 @@
                 itemEl.addEventListener('mouseout', () => {
                     itemEl.style.transform = 'none';
                     itemEl.style.boxShadow = '0 2px 6px rgba(0,0,0,0.1)';
+                });
+
+                itemEl.addEventListener('dragstart', (e) => {
+                    dragStartIndex = parseInt(itemEl.dataset.index);
+                    e.dataTransfer.setData('text/plain', dragStartIndex.toString());
+                    itemEl.style.opacity = '0.4';
+                });
+
+                itemEl.addEventListener('dragenter', (e) => {
+                    e.preventDefault();
+                    itemEl.style.border = `2px dashed ${COLORS.primary}`;
+                });
+
+                itemEl.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                });
+
+                itemEl.addEventListener('dragleave', () => {
+                    itemEl.style.border = 'none';
+                });
+
+                itemEl.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    itemEl.style.border = 'none';
+
+                    const dragEndIndex = parseInt(itemEl.dataset.index);
+                    if (dragStartIndex === dragEndIndex) return;
+
+                    const items = [...CONFIG.trackedItems];
+                    const draggedItem = items[dragStartIndex];
+                    items.splice(dragStartIndex, 1);
+                    items.splice(dragEndIndex, 0, draggedItem);
+
+                    CONFIG.trackedItems = items;
+                    refreshPanel();
+                });
+
+                itemEl.addEventListener('dragend', () => {
+                    itemEl.style.opacity = '1';
+                    dragStartIndex = null;
                 });
 
                 const itemName = document.createElement('a');
@@ -1626,6 +1854,11 @@
 
     // Инициализация скрипта
     function init() {
+        // Установка лимита отслеживаемых товаров
+        if (CONFIG.maxTrackedItems < DEFAULT_CONFIG.maxTrackedItems) {
+            CONFIG.maxTrackedItems = DEFAULT_CONFIG.maxTrackedItems;
+        }
+
         createPanelToggle();
         sortReviews();
         expandDescription();
