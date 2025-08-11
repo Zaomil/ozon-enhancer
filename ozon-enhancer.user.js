@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name          Ozon Interface Enhancer DEV
+// @name          Ozon Interface Enhancer
 // @namespace     https://github.com/Zaomil
-// @version       1.0.8
+// @version       1.0.9
 // @description   Улучшает интерфейс Ozon: сортирует отзывы, раскрывает описание, отслеживает цены, строит графики цен, смена темы
 // @author        Zaomil
 // @license       MIT
