@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name          Ozon Interface Enhancer
 // @namespace     https://github.com/Zaomil
-// @version       1.0.9
-// @description   Улучшает интерфейс Ozon: сортирует отзывы, раскрывает описание, отслеживает цены, строит графики цен, смена темы
+// @version       1.1.0
+// @description   Улучшает интерфейс Ozon.by: сортирует отзывы, раскрывает описание, отслеживает цены, строит графики цен
 // @author        Zaomil
-// @license       MIT
+// @license       GPL-3.0-or-later
 // @icon          https://ozon.by/favicon.ico
 // @match         https://*.ozon.by/*
 // @grant         GM_getValue
@@ -18,6 +18,11 @@
 // @connect       ozon.by
 // ==/UserScript==
 
+// Copyright (C) 2025 Zaomil
+// Licensed under the GNU General Public License v3 or later
+// See <https://www.gnu.org/licenses/> for details.
+
+
 (function() {
     'use strict';
 
@@ -27,43 +32,28 @@
         expandDescription: true,
         trackPrices: true,
         maxTrackedItems: 6,
-        priceDropNotifications: true,
-        theme: 'dark'
+        priceDropNotifications: true
     };
 
-    // Цветовые схемы для тем интерфейса
-    const THEMES = {
-        dark: {
-            background: "#121212",
-            surface: "#1e1e1e",
-            primary: "#BB86FC",
-            primaryVariant: "#3700B3",
-            secondary: "#03DAC6",
-            text: "#E0E0E0",
-            textSecondary: "#A0A0A0",
-            error: "#CF6679",
-            success: "#00C853",
-            warning: "#FFAB00",
-            border: "rgba(255,255,255,0.1)",
-            shadow: "0 8px 24px rgba(0, 0, 0, 0.5)",
-            iconFilter: "none"
-        },
-        light: {
-            background: "#ffffff",
-            surface: "#f8f9fa",
-            primary: "#6200ee",
-            primaryVariant: "#3700b3",
-            secondary: "#03dac6",
-            text: "#212529",
-            textSecondary: "#6c757d",
-            error: "#b00020",
-            success: "#198754",
-            warning: "#ffc107",
-            border: "rgba(0,0,0,0.08)",
-            shadow: "0 6px 20px rgba(0, 0, 0, 0.1)",
-            iconFilter: "invert(70%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(90%) contrast(90%)"
-        }
+    // Цветовая схема для темной темы интерфейса
+    const DARK_THEME = {
+        background: "#121212",
+        surface: "#1e1e1e",
+        primary: "#BB86FC",
+        primaryVariant: "#3700B3",
+        secondary: "#03DAC6",
+        text: "#E0E0E0",
+        textSecondary: "#A0A0A0",
+        error: "#CF6679",
+        success: "#00C853",
+        warning: "#FFAB00",
+        border: "rgba(255,255,255,0.1)",
+        shadow: "0 8px 24px rgba(0, 0, 0, 0.5)",
+        iconFilter: "none"
     };
+
+    // Текущая цветовая схема
+    const COLORS = DARK_THEME;
 
     // Форматировщик для белорусских рублей
     const BYN_FORMATTER = new Intl.NumberFormat('ru-BY', {
@@ -123,22 +113,11 @@
         },
         set lastPriceCheckTime(value) {
             GM_setValue('lastPriceCheckTime', value);
-        },
-        get theme() {
-            return GM_getValue('theme', DEFAULT_CONFIG.theme);
-        },
-        set theme(value) {
-            GM_setValue('theme', value);
-            applyTheme();
         }
     };
 
-    // Текущая цветовая схема
-    let COLORS = THEMES[CONFIG.theme];
-
-    // Применение выбранной темы к интерфейсу
-    function applyTheme() {
-        COLORS = THEMES[CONFIG.theme];
+    // Применение цветовой схемы к интерфейсу
+    function applyThemeStyles() {
         if (panelCreated) {
             refreshPanelStyles();
             refreshPanel();
@@ -147,7 +126,7 @@
         applyIconStyles();
     }
 
-    // Применение стилей к иконкам в зависимости от темы
+    // Применение стилей к иконкам
     function applyIconStyles() {
         const icons = document.querySelectorAll('#ozon-enhancer-panel img, #ozon-enhancer-panel .material-icons');
         icons.forEach(icon => {
@@ -183,18 +162,6 @@
             '.ui-q0',
             '.ui-o0',
             '.ui-o6'
-        ],
-        expandButtons: [
-            '.ui-d0k',
-            '[data-widget="webDescription"] button',
-            '.description button',
-            '.info-section button',
-            '[class*="expandButton"]',
-            '[class*="showMore"]',
-            'button[data-widget="descriptionExpandButton"]',
-            '.ui-k3 button',
-            '.ozon-ui-k3 button',
-            'button[aria-label="Развернуть описание"]'
         ],
         gallerySelectors: [
             '.gallery-modal',
@@ -456,40 +423,42 @@
 
     // Обновление цены отслеживаемого товара
     function updateTrackedItemPrice(article, newPrice) {
-        const today = new Date().toISOString().split('T')[0];
         let priceDropDetected = false;
         let notificationItem = null;
         let oldPrice = null;
 
         const updatedItems = CONFIG.trackedItems.map(item => {
             if (item.article === article) {
+                if (item.currentPrice === newPrice) {
+                     return item;
+                }
+
                 const threshold = item.notificationThreshold !== undefined ?
                                  item.notificationThreshold :
                                  0.2;
 
-                const history = [...item.priceHistory];
-                const lastEntry = history[history.length - 1];
-
-                if (lastEntry && lastEntry.date === today) {
-                    history[history.length - 1] = { price: newPrice, date: today };
-                } else {
-                    history.push({ price: newPrice, date: today });
-                }
+                const history = [...item.priceHistory, {
+                    price: newPrice,
+                    date: new Date().toISOString()
+                }];
 
                 const priceDiff = item.currentPrice - newPrice;
+                let newLastNotifiedPrice = item.lastNotifiedPrice;
+
                 if (newPrice < item.currentPrice &&
                     priceDiff >= threshold &&
                     (item.lastNotifiedPrice === null || newPrice < item.lastNotifiedPrice)) {
                     priceDropDetected = true;
                     notificationItem = { ...item, priceHistory: history };
                     oldPrice = item.currentPrice;
+                    newLastNotifiedPrice = newPrice;
                 }
 
                 return {
                     ...item,
                     currentPrice: newPrice,
                     priceHistory: history,
-                    lastNotifiedPrice: priceDropDetected ? newPrice : item.lastNotifiedPrice,
+                    lastNotifiedPrice: newLastNotifiedPrice,
                     lastUpdated: Date.now()
                 };
             }
@@ -500,8 +469,6 @@
 
         if (priceDropDetected && CONFIG.priceDropNotifications && notificationItem) {
             const priceDiff = (oldPrice - newPrice).toFixed(2);
-            const discount = ((priceDiff / oldPrice) * 100).toFixed(0);
-
             notificationQueue.push({
                 title: "🔔 Цена снизилась!",
                 text: `${notificationItem.name}: ${BYN_FORMATTER.format(newPrice)} (↓${BYN_FORMATTER.format(priceDiff)})`,
@@ -831,7 +798,7 @@
         document.body.appendChild(modal);
     }
 
-    // Показ графика цены товара
+    // Показ графика цены товара (исправленная версия)
     function showPriceChart(item) {
         const modal = document.createElement('div');
         modal.style.cssText = `
@@ -862,7 +829,7 @@
             display: flex;
             flex-direction: column;
             transform: scale(0.95);
-            animation: scaleIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            animation: scaleIn 0.3s cubic-bezier(0.175,0.885,0.32,1.275) forwards;
         `;
 
         modal.appendChild(modalContent);
@@ -875,7 +842,7 @@
             margin-bottom: 15px;
             text-align: center;
             color: ${COLORS.primary};
-            text-shadow: 0 0 10px rgba(187, 134, 252, 0.3);
+            text-shadow: 0 0 10px rgba(187,134,252,0.3);
         `;
         modalContent.appendChild(title);
 
@@ -899,28 +866,28 @@
         const diffPercent = ((Math.abs(diff) / initialPrice) * 100).toFixed(1);
 
         infoRow.innerHTML = `
-            <div style="text-align: center; min-width: 120px;">
-                <div style="font-size: 12px; color: ${COLORS.textSecondary}">Текущая</div>
-                <div style="font-weight: 700; font-size: 16px; color: ${currentPrice < initialPrice ? COLORS.success : COLORS.text}">
+            <div style="text-align:center; min-width:120px;">
+                <div style="font-size:12px; color:${COLORS.textSecondary}">Текущая</div>
+                <div style="font-weight:700; font-size:16px; color:${diff < 0 ? COLORS.success : COLORS.text}">
                     ${BYN_FORMATTER.format(currentPrice)}
                 </div>
-                <div style="font-size: 13px; color: ${diff === 0 ? COLORS.textSecondary : diff < 0 ? COLORS.success : COLORS.error}; margin-top: 4px;">
+                <div style="font-size:13px; color:${diff === 0 ? COLORS.textSecondary : diff < 0 ? COLORS.success : COLORS.error}; margin-top:4px;">
                     ${diff === 0 ? 'Без изменений' :
                      diff < 0 ? `▼ ${BYN_FORMATTER.format(Math.abs(diff))} (${diffPercent}%)` :
                      `▲ ${BYN_FORMATTER.format(diff)} (${diffPercent}%)`}
                 </div>
             </div>
-            <div style="text-align: center; min-width: 120px;">
-                <div style="font-size: 12px; color: ${COLORS.textSecondary}">Начальная</div>
-                <div style="font-weight: 700; font-size: 16px;">${BYN_FORMATTER.format(initialPrice)}</div>
+            <div style="text-align:center; min-width:120px;">
+                <div style="font-size:12px; color:${COLORS.textSecondary}">Начальная</div>
+                <div style="font-weight:700; font-size:16px;">${BYN_FORMATTER.format(initialPrice)}</div>
             </div>
-            <div style="text-align: center; min-width: 120px;">
-                <div style="font-size: 12px; color: ${COLORS.textSecondary}">Минимальная</div>
-                <div style="font-weight: 700; font-size: 16px; color: ${COLORS.success}">${BYN_FORMATTER.format(minPrice)}</div>
+            <div style="text-align:center; min-width:120px;">
+                <div style="font-size:12px; color:${COLORS.textSecondary}">Минимальная</div>
+                <div style="font-weight:700; font-size:16px; color:${COLORS.success}">${BYN_FORMATTER.format(minPrice)}</div>
             </div>
-            <div style="text-align: center; min-width: 120px;">
-                <div style="font-size: 12px; color: ${COLORS.textSecondary}">Максимальная</div>
-                <div style="font-weight: 700; font-size: 16px; color: ${COLORS.error}">${BYN_FORMATTER.format(maxPrice)}</div>
+            <div style="text-align:center; min-width:120px;">
+                <div style="font-size:12px; color:${COLORS.textSecondary}">Максимальная</div>
+                <div style="font-weight:700; font-size:16px; color:${COLORS.error}">${BYN_FORMATTER.format(maxPrice)}</div>
             </div>
         `;
         modalContent.appendChild(infoRow);
@@ -936,7 +903,143 @@
             modalContent.appendChild(chartContainer);
 
             const canvas = document.createElement('canvas');
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
             chartContainer.appendChild(canvas);
+
+            // Используем requestAnimationFrame для гарантированной отрисовки
+            requestAnimationFrame(() => {
+                if (!canvas.parentElement) return;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return;
+
+                // Устанавливаем размеры canvas
+                const containerRect = chartContainer.getBoundingClientRect();
+                canvas.width = containerRect.width;
+                canvas.height = containerRect.height;
+
+                const sortedHistory = [...item.priceHistory].sort((a, b) =>
+                    new Date(a.date) - new Date(b.date)
+                );
+                const prices = sortedHistory.map(entry => entry.price);
+                const dates = sortedHistory.map(entry => formatDate(entry.date));
+
+                const minVal = Math.min(...prices);
+                const maxVal = Math.max(...prices);
+                const range = maxVal - minVal || 1;
+
+                const padding = { top: 30, right: 30, bottom: 50, left: 60 };
+                const graphWidth = canvas.width - padding.left - padding.right;
+                const graphHeight = canvas.height - padding.top - padding.bottom;
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Рисуем сетку
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+
+                const horizontalLineCount = 6;
+                for (let i = 0; i < horizontalLineCount; i++) {
+                    const value = minVal + (i / (horizontalLineCount - 1)) * range;
+                    const yCoord = padding.top + graphHeight - ((value - minVal) / range * graphHeight);
+                    ctx.moveTo(padding.left, yCoord);
+                    ctx.lineTo(canvas.width - padding.right, yCoord);
+
+                    ctx.fillStyle = COLORS.textSecondary;
+                    ctx.textAlign = 'right';
+                    ctx.textBaseline = 'middle';
+                    ctx.font = '12px sans-serif';
+                    ctx.fillText(value.toFixed(2), padding.left - 10, yCoord);
+                }
+                ctx.stroke();
+
+                // Рисуем оси
+                ctx.strokeStyle = COLORS.text;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(padding.left, padding.top);
+                ctx.lineTo(padding.left, padding.top + graphHeight);
+                ctx.moveTo(padding.left, padding.top + graphHeight);
+                ctx.lineTo(canvas.width - padding.right, padding.top + graphHeight);
+                ctx.stroke();
+
+                // Подписи дат
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '12px sans-serif';
+
+                const dateStep = Math.max(1, Math.floor(dates.length / 5));
+                for (let i = 0; i < dates.length; i += dateStep) {
+                    const xCoord = padding.left + (i / (prices.length - 1)) * graphWidth;
+                    ctx.fillText(dates[i], xCoord, padding.top + graphHeight + 15);
+                }
+
+                // Рисуем область под графиком
+                const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + graphHeight);
+                gradient.addColorStop(0, 'rgba(187, 134, 252, 0.3)');
+                gradient.addColorStop(1, 'rgba(187, 134, 252, 0.05)');
+
+                ctx.beginPath();
+                ctx.moveTo(padding.left, padding.top + graphHeight);
+                for (let i = 0; i < prices.length; i++) {
+                    const xCoord = padding.left + (i / (prices.length - 1)) * graphWidth;
+                    const yCoord = padding.top + graphHeight - ((prices[i] - minVal) / range * graphHeight);
+                    ctx.lineTo(xCoord, yCoord)
+                }
+                ctx.lineTo(padding.left + graphWidth, padding.top + graphHeight);
+                ctx.closePath();
+                ctx.fillStyle = gradient;
+                ctx.fill();
+
+                // Рисуем линию графика
+                ctx.beginPath();
+                for (let i = 0; i < prices.length; i++) {
+                    const xCoord = padding.left + (i / (prices.length - 1)) * graphWidth;
+                    const yCoord = padding.top + graphHeight - ((prices[i] - minVal) / range * graphHeight);
+                    if (i === 0) ctx.moveTo(xCoord, yCoord);
+                    else ctx.lineTo(xCoord, yCoord);
+                }
+                ctx.lineWidth = 4;
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+                ctx.strokeStyle = COLORS.primary;
+                ctx.shadowColor = 'rgba(187, 134, 252, 0.5)';
+                ctx.shadowBlur = 8;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Рисуем точки на графике
+                ctx.fillStyle = COLORS.primary;
+                const importantPoints = [
+                    0,
+                    prices.length - 1,
+                    prices.indexOf(minVal),
+                    prices.indexOf(maxVal)
+                ];
+
+                for (const index of importantPoints) {
+                    if (index < 0 || index >= prices.length) continue;
+
+                    const xCoord = padding.left + (index / (prices.length - 1)) * graphWidth;
+                    const yCoord = padding.top + graphHeight - ((prices[index] - minVal) / range * graphHeight);
+
+                    ctx.beginPath();
+                    ctx.arc(xCoord, yCoord, 8, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.strokeStyle = COLORS.background;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Подписи к точкам
+                    ctx.fillStyle = COLORS.primary;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'bottom';
+                    ctx.fillText(`${prices[index].toFixed(2)} BYN`, xCoord, yCoord - 10);
+                }
+            });
         }
 
         const buttonsContainer = document.createElement('div');
@@ -994,161 +1097,6 @@
         modalContent.appendChild(buttonsContainer);
 
         document.body.appendChild(modal);
-
-        if (item.priceHistory.length >= 2) {
-            setTimeout(() => {
-                const ctx = canvas.getContext('2d');
-                const containerWidth = chartContainer.clientWidth;
-                const containerHeight = chartContainer.clientHeight;
-
-                canvas.width = containerWidth;
-                canvas.height = containerHeight;
-
-                const sortedHistory = [...item.priceHistory].sort((a, b) =>
-                    new Date(a.date) - new Date(b.date)
-                );
-
-                const prices = sortedHistory.map(entry => entry.price);
-                const dates = sortedHistory.map(entry => formatDate(entry.date));
-
-                const minVal = Math.min(...prices);
-                const maxVal = Math.max(...prices);
-                const range = maxVal - minVal || 1;
-
-                const padding = { top: 30, right: 30, bottom: 50, left: 60 };
-                const graphWidth = canvas.width - padding.left - padding.right;
-                const graphHeight = canvas.height - padding.top - padding.bottom;
-
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-                const x = (index) => padding.left + (index / (prices.length - 1)) * graphWidth;
-                const y = (price) => padding.top + graphHeight - ((price - minVal) / range * graphHeight);
-
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-
-                const horizontalLineCount = 6;
-                for (let i = 0; i < horizontalLineCount; i++) {
-                    const value = minVal + (i / (horizontalLineCount - 1)) * range;
-                    const yCoord = y(value);
-                    ctx.moveTo(padding.left, yCoord);
-                    ctx.lineTo(canvas.width - padding.right, yCoord);
-
-                    ctx.fillStyle = COLORS.textSecondary;
-                    ctx.textAlign = 'right';
-                    ctx.textBaseline = 'middle';
-                    ctx.font = '12px sans-serif';
-                    ctx.fillText(value.toFixed(2), padding.left - 10, yCoord);
-                }
-                ctx.stroke();
-
-                ctx.strokeStyle = COLORS.text;
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(padding.left, padding.top);
-                ctx.lineTo(padding.left, padding.top + graphHeight);
-                ctx.moveTo(padding.left, padding.top + graphHeight);
-                ctx.lineTo(canvas.width - padding.right, padding.top + graphHeight);
-                ctx.stroke();
-
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'top';
-                ctx.fillStyle = COLORS.text;
-                ctx.font = '12px sans-serif';
-
-                const dateStep = Math.max(1, Math.floor(dates.length / 5));
-                for (let i = 0; i < dates.length; i += dateStep) {
-                    const xCoord = padding.left + (i / (prices.length - 1)) * graphWidth;
-                    ctx.fillText(dates[i], xCoord, padding.top + graphHeight + 15);
-                }
-
-                const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + graphHeight);
-                gradient.addColorStop(0, 'rgba(187, 134, 252, 0.3)');
-                gradient.addColorStop(1, 'rgba(187, 134, 252, 0.05)');
-
-                const importantPoints = [
-                    { index: 0, label: `${prices[0].toFixed(2)} BYN`, date: dates[0] },
-                    { index: prices.length - 1, label: `${prices[prices.length - 1].toFixed(2)} BYN`, date: dates[dates.length - 1] }
-                ];
-
-                const minIndex = prices.indexOf(minVal);
-                const maxIndex = prices.indexOf(maxVal);
-
-                if (minIndex !== 0 && minIndex !== prices.length - 1) {
-                    importantPoints.push({
-                        index: minIndex,
-                        label: `${minVal.toFixed(2)} BYN`,
-                        date: dates[minIndex]
-                    });
-                }
-
-                if (maxIndex !== 0 && maxIndex !== prices.length - 1) {
-                    importantPoints.push({
-                        index: maxIndex,
-                        label: `${maxVal.toFixed(2)} BYN`,
-                        date: dates[maxIndex]
-                    });
-                }
-
-                ctx.beginPath();
-                ctx.moveTo(x(0), y(prices[0]));
-                for (let i = 1; i < prices.length; i++) {
-                    ctx.lineTo(x(i), y(prices[i]));
-                }
-                ctx.lineTo(x(prices.length - 1), y(prices[prices.length - 1]));
-                ctx.lineTo(x(prices.length - 1), padding.top + graphHeight);
-                ctx.lineTo(x(0), padding.top + graphHeight);
-                ctx.closePath();
-                ctx.fillStyle = gradient;
-                ctx.fill();
-
-                ctx.beginPath();
-                ctx.moveTo(x(0), y(prices[0]));
-                for (let i = 1; i < prices.length; i++) {
-                    ctx.lineTo(x(i), y(prices[i]));
-                }
-                ctx.lineWidth = 4;
-                ctx.lineJoin = 'round';
-                ctx.lineCap = 'round';
-                ctx.strokeStyle = COLORS.primary;
-                ctx.shadowColor = 'rgba(187, 134, 252, 0.5)';
-                ctx.shadowBlur = 8;
-                ctx.stroke();
-                ctx.shadowBlur = 0;
-
-                ctx.fillStyle = COLORS.primary;
-                importantPoints.forEach(point => {
-                    const xCoord = x(point.index);
-                    const yCoord = y(prices[point.index]);
-                    ctx.beginPath();
-                    ctx.arc(xCoord, yCoord, 8, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.strokeStyle = COLORS.background;
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
-                });
-
-                ctx.fillStyle = COLORS.text;
-                ctx.textBaseline = 'bottom';
-                ctx.font = 'bold 13px sans-serif';
-
-                importantPoints.forEach(point => {
-                    const xCoord = x(point.index);
-                    const yCoord = y(prices[point.index]);
-
-                    let textY = yCoord - 12;
-                    let textAlign = 'center';
-
-                    if (yCoord < 50) {
-                        textY = yCoord + 20;
-                    }
-
-                    ctx.fillStyle = COLORS.primary;
-                    ctx.fillText(point.label, xCoord, textY);
-                });
-            }, 100);
-        }
     }
 
     // Создание панели управления
@@ -1362,17 +1310,6 @@
         const settingsContainer = document.createElement('div');
         settingsContainer.style.padding = '16px';
         container.appendChild(settingsContainer);
-
-        const themeToggle = createToggle(
-            'Смена темы: Чёрный/Белый',
-            '🎨',
-            CONFIG.theme === 'dark',
-            checked => {
-                CONFIG.theme = checked ? 'dark' : 'light';
-            }
-        );
-        themeToggle.querySelector('div:first-child').title = 'Переключение между тёмной и светлой темами';
-        settingsContainer.appendChild(themeToggle);
 
         settingsContainer.appendChild(createToggle(
             'Сортировка отзывов (от худших)',
@@ -2266,7 +2203,7 @@
             CONFIG.maxTrackedItems = DEFAULT_CONFIG.maxTrackedItems;
         }
 
-        applyTheme();
+        applyThemeStyles();
 
         createPanelToggle();
         sortReviews();
