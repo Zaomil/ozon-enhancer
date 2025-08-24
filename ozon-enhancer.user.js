@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          Ozon Interface Enhancer
 // @namespace     https://github.com/Zaomil
-// @version       1.1.0
+// @version       1.1.1
 // @description   Улучшает интерфейс Ozon.by: сортирует отзывы, раскрывает описание, отслеживает цены, строит графики цен
 // @author        Zaomil
 // @license       GPL-3.0-or-later
@@ -21,7 +21,6 @@
 // Copyright (C) 2025 Zaomil
 // Licensed under the GNU General Public License v3 or later
 // See <https://www.gnu.org/licenses/> for details.
-
 
 (function() {
     'use strict';
@@ -798,7 +797,7 @@
         document.body.appendChild(modal);
     }
 
-    // Показ графика цены товара (исправленная версия)
+    // Показ графика цены товара
     function showPriceChart(item) {
         const modal = document.createElement('div');
         modal.style.cssText = `
@@ -807,7 +806,7 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0,0,0,0.7);
+            background: rgba(0,0,0,0.8);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -818,14 +817,14 @@
 
         const modalContent = document.createElement('div');
         modalContent.style.cssText = `
-            background: ${COLORS.surface};
+            background: #000000;
             border-radius: 12px;
             padding: 20px;
-            width: min(90vw, 700px);
+            width: min(90vw, 800px);
             max-height: 90vh;
             overflow: hidden;
-            box-shadow: ${COLORS.shadow};
-            color: ${COLORS.text};
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+            color: #FFFFFF;
             display: flex;
             flex-direction: column;
             transform: scale(0.95);
@@ -846,16 +845,17 @@
         `;
         modalContent.appendChild(title);
 
+        // Информационная панель с ключевыми метриками
         const infoRow = document.createElement('div');
         infoRow.style.cssText = `
-            display: flex;
-            justify-content: space-around;
-            margin-bottom: 15px;
-            background: linear-gradient(45deg, rgba(30,30,30,0.8), rgba(50,50,50,0.4));
-            border-radius: 8px;
-            padding: 12px;
-            gap: 10px;
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+            background: rgba(30,30,30,0.6);
+            border-radius: 10px;
+            padding: 15px;
+            backdrop-filter: blur(10px);
         `;
 
         const initialPrice = item.initialPrice;
@@ -866,28 +866,28 @@
         const diffPercent = ((Math.abs(diff) / initialPrice) * 100).toFixed(1);
 
         infoRow.innerHTML = `
-            <div style="text-align:center; min-width:120px;">
-                <div style="font-size:12px; color:${COLORS.textSecondary}">Текущая</div>
-                <div style="font-weight:700; font-size:16px; color:${diff < 0 ? COLORS.success : COLORS.text}">
+            <div style="text-align:center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                <div style="font-size:12px; color:${COLORS.textSecondary}; margin-bottom: 5px;">Текущая</div>
+                <div style="font-weight:700; font-size:18px; color:${diff < 0 ? COLORS.success : COLORS.text}">
                     ${BYN_FORMATTER.format(currentPrice)}
                 </div>
-                <div style="font-size:13px; color:${diff === 0 ? COLORS.textSecondary : diff < 0 ? COLORS.success : COLORS.error}; margin-top:4px;">
+                <div style="font-size:13px; color:${diff === 0 ? COLORS.textSecondary : diff < 0 ? COLORS.success : COLORS.error}; margin-top:5px;">
                     ${diff === 0 ? 'Без изменений' :
                      diff < 0 ? `▼ ${BYN_FORMATTER.format(Math.abs(diff))} (${diffPercent}%)` :
                      `▲ ${BYN_FORMATTER.format(diff)} (${diffPercent}%)`}
                 </div>
             </div>
-            <div style="text-align:center; min-width:120px;">
-                <div style="font-size:12px; color:${COLORS.textSecondary}">Начальная</div>
-                <div style="font-weight:700; font-size:16px;">${BYN_FORMATTER.format(initialPrice)}</div>
+            <div style="text-align:center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                <div style="font-size:12px; color:${COLORS.textSecondary}; margin-bottom: 5px;">Начальная</div>
+                <div style="font-weight:700; font-size:18px;">${BYN_FORMATTER.format(initialPrice)}</div>
             </div>
-            <div style="text-align:center; min-width:120px;">
-                <div style="font-size:12px; color:${COLORS.textSecondary}">Минимальная</div>
-                <div style="font-weight:700; font-size:16px; color:${COLORS.success}">${BYN_FORMATTER.format(minPrice)}</div>
+            <div style="text-align:center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                <div style="font-size:12px; color:${COLORS.textSecondary}; margin-bottom: 5px;">Минимальная</div>
+                <div style="font-weight:700; font-size:18px; color:${COLORS.success}">${BYN_FORMATTER.format(minPrice)}</div>
             </div>
-            <div style="text-align:center; min-width:120px;">
-                <div style="font-size:12px; color:${COLORS.textSecondary}">Максимальная</div>
-                <div style="font-weight:700; font-size:16px; color:${COLORS.error}">${BYN_FORMATTER.format(maxPrice)}</div>
+            <div style="text-align:center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                <div style="font-size:12px; color:${COLORS.textSecondary}; margin-bottom: 5px;">Максимальная</div>
+                <div style="font-weight:700; font-size:18px; color:${COLORS.error}">${BYN_FORMATTER.format(maxPrice)}</div>
             </div>
         `;
         modalContent.appendChild(infoRow);
@@ -895,11 +895,11 @@
         if (item.priceHistory.length < 2) {
             const message = document.createElement('div');
             message.textContent = 'Недостаточно данных для построения графика';
-            message.style.cssText = 'text-align: center; color: #666; padding: 20px 0;';
+            message.style.cssText = 'text-align: center; color: #666; padding: 40px 0;';
             modalContent.appendChild(message);
         } else {
             const chartContainer = document.createElement('div');
-            chartContainer.style.cssText = 'height: 300px; position: relative;';
+            chartContainer.style.cssText = 'height: 350px; position: relative;';
             modalContent.appendChild(chartContainer);
 
             const canvas = document.createElement('canvas');
@@ -907,157 +907,181 @@
             canvas.style.height = '100%';
             chartContainer.appendChild(canvas);
 
-            // Используем requestAnimationFrame для гарантированной отрисовки
+            // Используем requestAnimationFrame
             requestAnimationFrame(() => {
                 if (!canvas.parentElement) return;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) return;
 
                 // Устанавливаем размеры canvas
-                const containerRect = chartContainer.getBoundingClientRect();
-                canvas.width = containerRect.width;
-                canvas.height = containerRect.height;
+                const dpr = window.devicePixelRatio || 1;
+                const rect = canvas.getBoundingClientRect();
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+
+                const ctx = canvas.getContext('2d');
+                ctx.scale(dpr, dpr);
+
+                if (!ctx) return;
 
                 const sortedHistory = [...item.priceHistory].sort((a, b) =>
                     new Date(a.date) - new Date(b.date)
                 );
                 const prices = sortedHistory.map(entry => entry.price);
-                const dates = sortedHistory.map(entry => formatDate(entry.date));
+                const dates = sortedHistory.map(entry => {
+                    const date = new Date(entry.date);
+                    return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+                });
 
                 const minVal = Math.min(...prices);
                 const maxVal = Math.max(...prices);
                 const range = maxVal - minVal || 1;
 
-                const padding = { top: 30, right: 30, bottom: 50, left: 60 };
-                const graphWidth = canvas.width - padding.left - padding.right;
-                const graphHeight = canvas.height - padding.top - padding.bottom;
+                const padding = { top: 40, right: 30, bottom: 50, left: 60 };
+                const graphWidth = rect.width - padding.left - padding.right;
+                const graphHeight = rect.height - padding.top - padding.bottom;
 
+                // Функция для преобразования значения в координаты
+                const getX = (index) => padding.left + (index / (prices.length - 1)) * graphWidth;
+                const getY = (value) => padding.top + graphHeight - ((value - minVal) / range * graphHeight);
+
+                // Очистка canvas
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
 
                 // Рисуем сетку
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
                 ctx.lineWidth = 1;
-                ctx.beginPath();
 
-                const horizontalLineCount = 6;
-                for (let i = 0; i < horizontalLineCount; i++) {
-                    const value = minVal + (i / (horizontalLineCount - 1)) * range;
-                    const yCoord = padding.top + graphHeight - ((value - minVal) / range * graphHeight);
-                    ctx.moveTo(padding.left, yCoord);
-                    ctx.lineTo(canvas.width - padding.right, yCoord);
+                // Горизонтальные линии
+                const horizontalLineCount = 5;
+                for (let i = 0; i <= horizontalLineCount; i++) {
+                    const value = minVal + (i / horizontalLineCount) * range;
+                    const y = getY(value);
 
+                    ctx.beginPath();
+                    ctx.moveTo(padding.left, y);
+                    ctx.lineTo(rect.width - padding.right, y);
+                    ctx.stroke();
+
+                    // Подписи цен
                     ctx.fillStyle = COLORS.textSecondary;
                     ctx.textAlign = 'right';
                     ctx.textBaseline = 'middle';
-                    ctx.font = '12px sans-serif';
-                    ctx.fillText(value.toFixed(2), padding.left - 10, yCoord);
+                    ctx.font = '11px sans-serif';
+                    ctx.fillText(BYN_FORMATTER.format(value), padding.left - 8, y);
                 }
-                ctx.stroke();
 
-                // Рисуем оси
-                ctx.strokeStyle = COLORS.text;
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(padding.left, padding.top);
-                ctx.lineTo(padding.left, padding.top + graphHeight);
-                ctx.moveTo(padding.left, padding.top + graphHeight);
-                ctx.lineTo(canvas.width - padding.right, padding.top + graphHeight);
-                ctx.stroke();
-
-                // Подписи дат
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'top';
-                ctx.fillStyle = COLORS.text;
-                ctx.font = '12px sans-serif';
-
-                const dateStep = Math.max(1, Math.floor(dates.length / 5));
+                // Вертикальные линии
+                const dateStep = Math.max(1, Math.floor(dates.length / 6));
                 for (let i = 0; i < dates.length; i += dateStep) {
-                    const xCoord = padding.left + (i / (prices.length - 1)) * graphWidth;
-                    ctx.fillText(dates[i], xCoord, padding.top + graphHeight + 15);
+                    const x = getX(i);
+
+                    ctx.beginPath();
+                    ctx.moveTo(x, padding.top);
+                    ctx.lineTo(x, padding.top + graphHeight);
+                    ctx.stroke();
+
+                    // Подписи дат
+                    ctx.fillStyle = COLORS.textSecondary;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'top';
+                    ctx.font = '11px sans-serif';
+                    ctx.fillText(dates[i], x, padding.top + graphHeight + 8);
                 }
 
-                // Рисуем область под графиком
+                // Рисуем область под графиком с градиентом
                 const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + graphHeight);
                 gradient.addColorStop(0, 'rgba(187, 134, 252, 0.3)');
                 gradient.addColorStop(1, 'rgba(187, 134, 252, 0.05)');
 
                 ctx.beginPath();
-                ctx.moveTo(padding.left, padding.top + graphHeight);
-                for (let i = 0; i < prices.length; i++) {
-                    const xCoord = padding.left + (i / (prices.length - 1)) * graphWidth;
-                    const yCoord = padding.top + graphHeight - ((prices[i] - minVal) / range * graphHeight);
-                    ctx.lineTo(xCoord, yCoord)
+                ctx.moveTo(getX(0), getY(prices[0]));
+                for (let i = 1; i < prices.length; i++) {
+                    ctx.lineTo(getX(i), getY(prices[i]));
                 }
-                ctx.lineTo(padding.left + graphWidth, padding.top + graphHeight);
+                ctx.lineTo(getX(prices.length - 1), padding.top + graphHeight);
+                ctx.lineTo(getX(0), padding.top + graphHeight);
                 ctx.closePath();
                 ctx.fillStyle = gradient;
                 ctx.fill();
 
                 // Рисуем линию графика
                 ctx.beginPath();
-                for (let i = 0; i < prices.length; i++) {
-                    const xCoord = padding.left + (i / (prices.length - 1)) * graphWidth;
-                    const yCoord = padding.top + graphHeight - ((prices[i] - minVal) / range * graphHeight);
-                    if (i === 0) ctx.moveTo(xCoord, yCoord);
-                    else ctx.lineTo(xCoord, yCoord);
+                ctx.moveTo(getX(0), getY(prices[0]));
+                for (let i = 1; i < prices.length; i++) {
+                    ctx.lineTo(getX(i), getY(prices[i]));
                 }
-                ctx.lineWidth = 4;
+                ctx.lineWidth = 3;
                 ctx.lineJoin = 'round';
                 ctx.lineCap = 'round';
                 ctx.strokeStyle = COLORS.primary;
                 ctx.shadowColor = 'rgba(187, 134, 252, 0.5)';
-                ctx.shadowBlur = 8;
+                ctx.shadowBlur = 10;
                 ctx.stroke();
                 ctx.shadowBlur = 0;
 
-                // Рисуем точки на графике
-                ctx.fillStyle = COLORS.primary;
+                // Рисуем точки на ключевых позициях
                 const importantPoints = [
-                    0,
-                    prices.length - 1,
-                    prices.indexOf(minVal),
-                    prices.indexOf(maxVal)
+                    0, // начальная точка
+                    prices.length - 1, // конечная точка
+                    prices.indexOf(minVal), // минимальная цена
+                    prices.indexOf(maxVal) // максимальная цена
                 ];
 
-                for (const index of importantPoints) {
-                    if (index < 0 || index >= prices.length) continue;
+                importantPoints.forEach(index => {
+                    if (index < 0 || index >= prices.length) return;
 
-                    const xCoord = padding.left + (index / (prices.length - 1)) * graphWidth;
-                    const yCoord = padding.top + graphHeight - ((prices[index] - minVal) / range * graphHeight);
+                    const x = getX(index);
+                    const y = getY(prices[index]);
 
+                    // Внешний круг
                     ctx.beginPath();
-                    ctx.arc(xCoord, yCoord, 8, 0, Math.PI * 2);
+                    ctx.arc(x, y, 8, 0, Math.PI * 2);
+                    ctx.fillStyle = COLORS.primary;
                     ctx.fill();
 
-                    ctx.strokeStyle = COLORS.background;
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
+                    // Внутренний круг
+                    ctx.beginPath();
+                    ctx.arc(x, y, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = COLORS.background;
+                    ctx.fill();
 
-                    // Подписи к точкам
-                    ctx.fillStyle = COLORS.primary;
+                    // Подпись значения
+                    ctx.fillStyle = COLORS.text;
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'bottom';
-                    ctx.fillText(`${prices[index].toFixed(2)} BYN`, xCoord, yCoord - 10);
-                }
+                    ctx.font = '12px sans-serif';
+                    ctx.fillText(BYN_FORMATTER.format(prices[index]), x, y - 12);
+                });
             });
         }
 
         const buttonsContainer = document.createElement('div');
-        buttonsContainer.style.cssText = 'display: flex; justify-content: center; gap: 10px; margin-top: 15px;';
+        buttonsContainer.style.cssText = 'display: flex; justify-content: center; gap: 12px; margin-top: 20px;';
 
         const exportBtn = document.createElement('button');
-        exportBtn.textContent = 'Экспорт графика';
+        exportBtn.textContent = 'Экспорт данных';
         exportBtn.style.cssText = `
-            padding: 10px 15px;
+            padding: 10px 16px;
             background: linear-gradient(45deg, ${COLORS.secondary}, #018786);
             color: ${COLORS.background};
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
             font-weight: 600;
             transition: all 0.2s;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            gap: 6px;
         `;
+        exportBtn.innerHTML = '<span style="font-size:16px">📊</span> ' + exportBtn.textContent;
+        exportBtn.addEventListener('mouseover', () => {
+            exportBtn.style.transform = 'translateY(-2px)';
+            exportBtn.style.boxShadow = '0 6px 14px rgba(0,0,0,0.4)';
+        });
+        exportBtn.addEventListener('mouseout', () => {
+            exportBtn.style.transform = 'none';
+            exportBtn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+        });
         exportBtn.addEventListener('click', () => {
             const data = {
                 name: item.name,
@@ -1075,28 +1099,62 @@
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
+
+            showToast('Данные экспортированы', 'success');
         });
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = 'Закрыть';
         closeBtn.style.cssText = `
-            padding: 10px 25px;
+            padding: 10px 24px;
             background: linear-gradient(45deg, ${COLORS.primary}, ${COLORS.primaryVariant});
             color: ${COLORS.background};
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
             font-weight: 600;
             transition: all 0.2s;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            gap: 6px;
         `;
+        closeBtn.innerHTML = '<span style="font-size:16px">✕</span> ' + closeBtn.textContent;
+        closeBtn.addEventListener('mouseover', () => {
+            closeBtn.style.transform = 'translateY(-2px)';
+            closeBtn.style.boxShadow = '0 6px 14px rgba(0,0,0,0.4)';
+        });
+        closeBtn.addEventListener('mouseout', () => {
+            closeBtn.style.transform = 'none';
+            closeBtn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+        });
         closeBtn.addEventListener('click', () => modal.remove());
 
         buttonsContainer.appendChild(exportBtn);
         buttonsContainer.appendChild(closeBtn);
         modalContent.appendChild(buttonsContainer);
 
+        // Добавляем обработчик закрытия по клику вне модального окна
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) modal.remove();
+        });
+
         document.body.appendChild(modal);
+
+        // Добавляем обработчик Escape для закрытия
+        const handleEscape = (e) => {
+            if (e.key === 'Escape') modal.remove();
+        };
+        document.addEventListener('keydown', handleEscape);
+
+        // Убираем обработчик при закрытии модального окна
+        const observer = new MutationObserver(() => {
+            if (!document.body.contains(modal)) {
+                document.removeEventListener('keydown', handleEscape);
+                observer.disconnect();
+            }
+        });
+        observer.observe(document.body, { childList: true });
     }
 
     // Создание панели управления
